@@ -165,8 +165,15 @@ Dashboard (TanStack Query, polls)
   game's playlist ("GTA 6 Shorts" / "GTA 6 — Full Videos", created on first use, recreated if deleted).
   Category Gaming, not made for kids, #Shorts only on Shorts, visibility private/unlisted/public in Settings.
   Tests: `pnpm test` (incl. fake-YouTube upload with a mid-upload 503).
-- [ ] **Step 7 — Daily autopilot**
-  Vercel Cron config, daily slot scheduling, "auto-upload approved" toggle, retry/failure handling, preview cleanup after publish.
+- [x] **Step 7 — Daily autopilot** (needs migration 0002 to run)
+  `src/lib/scheduler.ts` tick: (1) recover clips stuck in scripting >15 min, (2) daily discovery at upload
+  time − 4h (+ retry up to 3 failed scripts, then Claude scripts), (3) autopilot ON → at the upload time release
+  the oldest approved clips (Shorts/day + 1 full video) as upload jobs; OFF → approve uploads immediately,
+  (4) delete previews of videos published >7 days ago (server + worker/output). Each slot claimed with a
+  compare-and-set (`last_discovery_at` / `last_release_at`) so it runs once; catch-up windows 12h / 6h.
+  Clocks: the worker ticks every 5 min (`/api/worker/tick`, precise) + Vercel Cron daily backup
+  (`vercel.ts` → `/api/cron/tick` 12:00 UTC, Hobby = 1/day). Settings shows next/last runs.
+  Tests: `pnpm test:schedule`.
 - [ ] **Step 8 — Polish & deploy**
   Notifications (email/Telegram when a clip is ready), analytics card (views of published Shorts), deploy to Vercel, production env setup.
 

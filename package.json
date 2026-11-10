@@ -11,9 +11,10 @@
     "db:check": "node --env-file=.env.local scripts/db-check.mjs",
     "db:seed": "node --no-warnings --env-file=.env.local scripts/db-seed.ts",
     "test:discovery": "tsx scripts/discovery-check.mts",
-    "test": "pnpm test:dedupe && pnpm test:discovery && pnpm test:upload",
+    "test": "pnpm test:dedupe && pnpm test:discovery && pnpm test:upload && pnpm test:schedule",
     "worker": "node --no-warnings --env-file=.env.local --import tsx worker/index.mts",
-    "test:upload": "tsx scripts/upload-check.mts"
+    "test:upload": "tsx scripts/upload-check.mts",
+    "test:schedule": "tsx scripts/schedule-check.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.7.0",
@@ -35,6 +36,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vercel/config": "^0.14.1",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",

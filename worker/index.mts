@@ -2,24 +2,27 @@
  * ClipPilot worker — runs on your Mac. Renders videos and uploads approved ones to YouTube.
  *   pnpm worker          poll for render + upload jobs every 30s
  *   pnpm worker --once   process at most one job, then exit
+ *   pnpm worker --tick   run one scheduler tick and show the next discovery/upload times
  *   pnpm worker --local <clip.json>   render a clip JSON file offline (no server, no upload)
  *
  * Needs: ffmpeg + ffprobe (brew install ffmpeg), macOS `say`.
  * Full-quality videos stay in worker/output/<clipId>/; only a small preview is uploaded for review.
  */
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
+import path from "node:path";
 import os from "node:os";
 import { createClient } from "@supabase/supabase-js";
 import type { Clip } from "../src/lib/types.ts";
 import { run } from "./proc.mts";
-import { fullPathFor, renderClip } from "./render.mts";
+import { OUTPUT_DIR, fullPathFor, renderClip } from "./render.mts";
 import { uploadToYouTube, type UploadMetadata } from "./youtube.mts";
 
 const API = (process.env.CLIPPILOT_URL || "http://localhost:3000").replace(/\/$/, "");
 const SECRET = process.env.WORKER_SECRET;
 const WORKER_ID = `${os.hostname()}-${process.pid}`.slice(0, 64);
 const POLL_MS = 30_000;
+const TICK_MS = 5 * 60_000; // scheduler clock
 
 const log = (m: string) => console.log(`${new Date().toLocaleTimeString()}  ${m}`);
 
@@ -89,6 +92,33 @@ async function processOne(type: JobKind): Promise<boolean> {
   return true;
 }
 
+interface TickResult {
+  discovery: string;
+  release: { status: string; queued: number };
+  recovered: number;
+  cleanedUp: string[];
+  nextDiscoveryAt: string;
+  nextReleaseAt: string;
+}
+
+const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/** Drives the daily schedule and removes local files of videos published > 7 days ago. */
+async function tick(verbose = false) {
+  const r = await call<TickResult>("tick", {});
+  if (r.discovery === "started") log("⏰ daily discovery started (YouTube trends → Claude scripts)");
+  if (r.release.status === "released") log(`⏰ upload slot: ${r.release.queued} approved video(s) released`);
+  if (r.recovered) log(`↺ recovered ${r.recovered} stuck clip(s)`);
+  for (const id of r.cleanedUp) {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) continue; // only ever delete clip-id folders
+    await rm(path.join(OUTPUT_DIR, id), { recursive: true, force: true });
+  }
+  if (r.cleanedUp.length) log(`🧹 removed ${r.cleanedUp.length} old published video(s) from worker/output`);
+  if (verbose || r.discovery === "started") {
+    log(`next discovery ${hhmm(r.nextDiscoveryAt)} · next upload slot ${hhmm(r.nextReleaseAt)} · uploads: ${r.release.status}`);
+  }
+}
+
 /** Renders first (so new clips reach review fast), then uploads. */
 async function processNext(): Promise<boolean> {
   return (await processOne("render")) || (await processOne("upload"));
@@ -116,6 +146,11 @@ async function main() {
   if (!SECRET) throw new Error("WORKER_SECRET missing (it's in .env.local)");
   log(`ClipPilot worker ${WORKER_ID} → ${API}`);
 
+  if (args.includes("--tick")) {
+    await tick(true);
+    return;
+  }
+
   if (args.includes("--once")) {
     if (!(await processNext())) log("no render or upload jobs waiting");
     return;
@@ -126,7 +161,13 @@ async function main() {
     log("stopping after the current job…");
     stop = true;
   });
+  let lastTick = 0;
   while (!stop) {
+    if (Date.now() - lastTick >= TICK_MS) {
+      const first = lastTick === 0;
+      lastTick = Date.now();
+      await tick(first).catch((e) => log(`tick error: ${e instanceof Error ? e.message : e}`));
+    }
     try {
       const didWork = await processNext();
       if (didWork) continue; // check for more right away

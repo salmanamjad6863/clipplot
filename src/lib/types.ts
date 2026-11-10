@@ -104,6 +104,15 @@ export interface Settings {
   youtubeChannelTitle?: string;
   /** Visibility of uploads. Unverified Google apps can only upload as private (YouTube API policy). */
   youtubePrivacy: "private" | "unlisted" | "public";
+  /** Daily scheduler status (read-only, from the server) */
+  schedule?: {
+    lastDiscoveryAt: string | null;
+    lastReleaseAt: string | null;
+    nextDiscoveryAt: string | null;
+    nextReleaseAt: string | null;
+    /** false until migration 0002 is applied */
+    ready: boolean;
+  };
 }
 
 export type ClipPatch = Partial<Pick<Clip, "status" | "title" | "description" | "tags" | "scheduledFor">>;

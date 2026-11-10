@@ -56,6 +56,19 @@ export interface Store {
   setPlaylistId(game: string, format: "short" | "long", playlistId: string | null): Promise<void>;
   markPublished(jobId: string, clipId: string, r: { youtubeVideoId: string; youtubeUrl: string }): Promise<Clip | null>;
   setClipPlaylist(clipId: string, playlistId: string): Promise<void>;
+
+  /* ---- scheduler (Step 7) ---- */
+  getSchedulerState(): Promise<{ lastDiscoveryAt: string | null; lastReleaseAt: string | null }>;
+  /** Compare-and-set: records a run for this slot. False if another tick already ran it. */
+  claimSchedulerRun(kind: "discovery" | "release", slotIso: string): Promise<boolean>;
+  /** Clips stuck in `scripting` (crash/restart) since before `olderThanIso` → back to discovered */
+  resetStuckScripting(olderThanIso: string): Promise<number>;
+  /** Failed-script clips → discovered so they're retried (max `limit`) */
+  retryFailedScripts(limit: number): Promise<number>;
+  /** Published clips whose preview is older than `olderThanIso` and still stored */
+  previewsToCleanup(olderThanIso: string): Promise<string[]>;
+  /** Deletes the preview from storage and clears render_url */
+  clearPreview(clipId: string): Promise<void>;
 }
 
 export type JobType = "script" | "render" | "upload";

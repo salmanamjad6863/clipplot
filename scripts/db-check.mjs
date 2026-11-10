@@ -28,8 +28,8 @@ for (const table of ["settings", "games", "trends", "clips", "jobs"]) {
 
 // Migration 0002 (YouTube publishing) applied?
 if (ok) {
-  const { error } = await sb.from("settings").select("youtube_privacy, youtube_channel_title").limit(1);
-  console.log(error ? "✗ migration 0002 not applied — run supabase/migrations/0002_youtube.sql" : "✓ migration 0002 (YouTube) applied");
+  const { error } = await sb.from("settings").select("youtube_privacy, youtube_channel_title, last_discovery_at, last_release_at").limit(1);
+  console.log(error ? "✗ migration 0002 not applied — run supabase/migrations/0002_publishing.sql" : "✓ migration 0002 (publishing + scheduler) applied");
   if (error) ok = false;
   const { data: buckets } = await sb.storage.listBuckets();
   const hasBucket = buckets?.some((b) => b.name === "renders");

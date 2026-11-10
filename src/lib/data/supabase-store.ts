@@ -61,6 +61,8 @@ interface SettingsRow {
   youtube_channel_id: string | null;
   youtube_channel_title?: string | null; // added in 0002
   youtube_privacy?: Settings["youtubePrivacy"]; // added in 0002
+  last_discovery_at?: string | null; // added in 0002
+  last_release_at?: string | null; // added in 0002
 }
 
 interface GameRow {
@@ -151,7 +153,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function fail(what: string, error: { message: string; code?: string }): never {
   if (error.code === "PGRST204" || error.code === "42703") {
-    throw new HttpError(503, "Database needs an update — run supabase/migrations/0002_youtube.sql in the Supabase SQL Editor");
+    throw new HttpError(503, "Database needs an update — run supabase/migrations/0002_publishing.sql in the Supabase SQL Editor");
   }
   if (error.code === "PGRST205" || error.code === "42P01") {
     throw new HttpError(503, "Database not set up — run supabase/migrations/0001_init.sql in the Supabase SQL Editor");
@@ -601,6 +603,77 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     async setClipPlaylist(clipId, playlistId) {
       const { error } = await sb.from("clips").update({ playlist_id: playlistId }).eq("id", clipId);
       if (error) fail("set clip playlist", error);
+    },
+
+    /* ---------- scheduler ---------- */
+
+    async getSchedulerState() {
+      const { data, error } = await sb.from("settings").select("last_discovery_at, last_release_at").eq("id", 1).single<SettingsRow>();
+      if (error) fail("scheduler state", error);
+      return { lastDiscoveryAt: data.last_discovery_at ?? null, lastReleaseAt: data.last_release_at ?? null };
+    },
+
+    async claimSchedulerRun(kind, slotIso) {
+      const col = kind === "discovery" ? "last_discovery_at" : "last_release_at";
+      const { data, error } = await sb
+        .from("settings")
+        .update({ [col]: new Date().toISOString() })
+        .eq("id", 1)
+        .or(`${col}.is.null,${col}.lt.${slotIso}`)
+        .select("id");
+      if (error) fail("claim scheduler run", error);
+      return (data?.length ?? 0) > 0;
+    },
+
+    async resetStuckScripting(olderThanIso) {
+      const { data, error } = await sb
+        .from("clips")
+        .update({ status: "discovered" })
+        .eq("status", "scripting")
+        .lt("updated_at", olderThanIso)
+        .select("id");
+      if (error) fail("reset stuck", error);
+      return data?.length ?? 0;
+    },
+
+    async retryFailedScripts(limit) {
+      const { data: ids, error } = await sb
+        .from("clips")
+        .select("id")
+        .eq("status", "failed")
+        .like("error", "Script:%")
+        .order("updated_at")
+        .limit(limit)
+        .returns<{ id: string }[]>();
+      if (error) fail("find failed scripts", error);
+      if (!ids.length) return 0;
+      const { data, error: e2 } = await sb
+        .from("clips")
+        .update({ status: "discovered", error: null })
+        .in("id", ids.map((r) => r.id))
+        .eq("status", "failed")
+        .select("id");
+      if (e2) fail("retry scripts", e2);
+      return data?.length ?? 0;
+    },
+
+    async previewsToCleanup(olderThanIso) {
+      const { data, error } = await sb
+        .from("clips")
+        .select("id")
+        .eq("status", "published")
+        .not("render_url", "is", null)
+        .lt("published_at", olderThanIso)
+        .limit(50)
+        .returns<{ id: string }[]>();
+      if (error) fail("previews to clean", error);
+      return data.map((r) => r.id);
+    },
+
+    async clearPreview(clipId) {
+      await sb.storage.from(RENDER_BUCKET).remove([`${clipId}/preview.mp4`, `${clipId}/preview.jpg`]);
+      const { error } = await sb.from("clips").update({ render_url: null }).eq("id", clipId);
+      if (error) fail("clear preview", error);
     },
 
     async updateSettings(next) {

@@ -7,6 +7,7 @@ import { Clapperboard, Copy, GripVertical, Radar, Save, Smartphone, Timer, Squar
 import { toast } from "sonner";
 import { PageHeader, Segmented, Toggle, ease, inputCls } from "@/components/ui";
 import { GAMES_BY_SLUG } from "@/lib/games";
+import { DISCOVERY_LEAD_HOURS } from "@/lib/schedule-time";
 import { useDisconnectYouTube, useSaveSettings, useSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
@@ -154,6 +155,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
             <span className="text-xs text-muted">Daily upload time (UTC)</span>
             <input type="time" value={s.uploadTime} onChange={(e) => set("uploadTime", e.target.value)} className={`${inputCls} mt-1.5 w-40`} />
           </label>
+          <ScheduleStatus s={s} saved={initial} />
           <YouTubeConnection connected={s.youtubeConnected} channelTitle={s.youtubeChannelTitle} />
           <div className="mt-4">
             <p className="text-xs text-muted">Upload visibility</p>
@@ -177,6 +179,51 @@ function SettingsForm({ initial }: { initial: Settings }) {
         </Card>
       </div>
     </>
+  );
+}
+
+const fmtTime = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+
+/** Explains the daily rhythm and shows last/next runs (times in your local timezone). */
+function ScheduleStatus({ s, saved }: { s: Settings; saved: Settings }) {
+  const sch = saved.schedule;
+  const [h, m] = s.uploadTime.split(":").map(Number);
+  const discoveryUtc = `${String((h - DISCOVERY_LEAD_HOURS + 24) % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  const timeChanged = s.uploadTime !== saved.uploadTime;
+
+  return (
+    <div className="mt-3 rounded-xl bg-white/[0.03] p-3 text-xs text-muted">
+      <p>
+        Daily at <b className="text-fg/90">{discoveryUtc} UTC</b> ClipPilot finds trends and Claude writes scripts (
+        {DISCOVERY_LEAD_HOURS}h before upload) so you can review.{" "}
+        {s.autopilot ? (
+          <>
+            At <b className="text-fg/90">{s.uploadTime} UTC</b> up to {s.formats.short.perDay} approved Short
+            {s.formats.short.perDay > 1 ? "s" : ""} + 1 full video upload.
+          </>
+        ) : (
+          <>Autopilot is off — approved videos upload right away.</>
+        )}
+      </p>
+      {!sch?.ready ? (
+        <p className="mt-2 text-warning">Scheduler needs migration 0002 — run it in the Supabase SQL Editor.</p>
+      ) : timeChanged ? (
+        <p className="mt-2 text-amber">Save to update the next run times.</p>
+      ) : (
+        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
+          <span>Next discovery: <span className="text-fg/80">{fmtTime(sch.nextDiscoveryAt)}</span></span>
+          <span>Last: <span className="text-fg/80">{fmtTime(sch.lastDiscoveryAt)}</span></span>
+          {s.autopilot && (
+            <>
+              <span>Next upload slot: <span className="text-fg/80">{fmtTime(sch.nextReleaseAt)}</span></span>
+              <span>Last: <span className="text-fg/80">{fmtTime(sch.lastReleaseAt)}</span></span>
+            </>
+          )}
+        </div>
+      )}
+      <p className="mt-2">The worker on your Mac (<code className="text-fg/70">pnpm worker</code>) is the clock — keep it running.</p>
+    </div>
   );
 }
 

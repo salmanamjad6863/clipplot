@@ -2,11 +2,26 @@ import { connection } from "next/server";
 import { HttpError, handle } from "@/lib/api";
 import { getStore } from "@/lib/data";
 import { GAMES_BY_SLUG } from "@/lib/games";
+import { scheduleFor } from "@/lib/schedule-time";
 import type { Settings } from "@/lib/types";
+
+async function withSchedule(settings: Settings): Promise<Settings> {
+  try {
+    const st = await getStore().getSchedulerState();
+    const sch = scheduleFor(settings.uploadTime, Date.now(), { discovery: st.lastDiscoveryAt, release: st.lastReleaseAt });
+    return {
+      ...settings,
+      schedule: { ...st, nextDiscoveryAt: sch.nextDiscoveryAt, nextReleaseAt: sch.nextReleaseAt, ready: true },
+    };
+  } catch {
+    // migration 0002 not applied yet — settings still load
+    return { ...settings, schedule: { lastDiscoveryAt: null, lastReleaseAt: null, nextDiscoveryAt: null, nextReleaseAt: null, ready: false } };
+  }
+}
 
 export async function GET() {
   await connection();
-  return handle("get settings", () => getStore().getSettings());
+  return handle("get settings", async () => withSchedule(await getStore().getSettings()));
 }
 
 function validate(body: Partial<Settings>) {
@@ -45,8 +60,9 @@ export async function PUT(req: Request) {
     // youtubeConnected is derived server-side, never set by the client
     delete body.youtubeConnected;
     delete body.youtubeChannelTitle;
+    delete body.schedule;
     const errors = validate(body);
     if (errors.length) throw new HttpError(400, errors.join(". "));
-    return getStore().updateSettings(body);
+    return withSchedule(await getStore().updateSettings(body));
   });
 }

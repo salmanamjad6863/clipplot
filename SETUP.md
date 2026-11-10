@@ -9,8 +9,8 @@ Already done: Supabase keys + tables + seed, YouTube API key, FFmpeg, `CRON_SECR
 2. **API Keys → Create key** (starts with `sk-ant-api…`) → `.env.local`: `ANTHROPIC_API_KEY=…`
 3. Restart `pnpm dev`. Open a failed clip → **Write script**.
 
-## 2. Database update for YouTube — pending
-Supabase → **SQL Editor → New query** → paste all of `supabase/migrations/0002_youtube.sql` → **Run**.
+## 2. Database update (YouTube + daily scheduler) — pending
+Supabase → **SQL Editor → New query** → paste all of `supabase/migrations/0002_publishing.sql` → **Run**.
 Check: `pnpm db:check` → every line ✓.
 
 ## 3. Google OAuth client (uploading) — pending
@@ -44,7 +44,16 @@ In the same Google Cloud project as your YouTube API key:
   [YouTube API audit](https://support.google.com/youtube/contact/yt_api_form) to unlock public uploads.
 - Daily quota is 10,000 units: one upload ≈ 1,600, a discovery run ≈ 101 per game searched.
 
-## 4. Test the whole pipeline
+## 4. Daily autopilot (how it runs)
+- Keep `pnpm worker` running on your Mac — it renders, uploads, **and is the scheduler clock** (ticks every 5 min).
+- Settings → **Daily upload time (UTC)**. Discovery + Claude scripts run 4h earlier so you can review.
+- Autopilot **off**: approving uploads right away. **On**: approved videos wait for the daily upload time
+  (Shorts per day + 1 full video). Settings shows the next/last runs.
+- On Vercel, a daily cron (12:00 UTC) is the backup for discovery if your Mac is off. If you move the upload
+  time far from 16:00 UTC, change the schedule in `vercel.ts` to (upload time − 4h).
+- Check any time: `pnpm worker --tick` prints the next discovery and upload slot.
+
+## 5. Test the whole pipeline
 ```bash
 pnpm dev        # terminal 1
 pnpm worker     # terminal 2 — renders + uploads, polls every 30s
@@ -57,6 +66,7 @@ pnpm worker     # terminal 2 — renders + uploads, polls every 30s
 Optional: put your own gameplay / official trailer clips in `worker/footage/gta-6/` (see its README) —
 otherwise videos use an animated gradient background.
 
-## 5. Later — Step 7/8 (deploy)
-Vercel project + all `.env.local` values as Vercel env vars, the production redirect URI above, and the
-worker pointed at the live site with `CLIPPILOT_URL=https://<your-domain>`.
+## 6. Later — Step 8 (deploy)
+Vercel project + all `.env.local` values as Vercel env vars (including `CRON_SECRET` — Vercel sends it to the
+cron automatically), the production redirect URI above, and the worker pointed at the live site with
+`CLIPPILOT_URL=https://<your-domain>`.

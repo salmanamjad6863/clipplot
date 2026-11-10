@@ -152,6 +152,22 @@ export const mockStore: Store = {
     return null;
   },
   async setClipPlaylist() {},
+  async getSchedulerState() {
+    return { lastDiscoveryAt: null, lastReleaseAt: null };
+  },
+  async claimSchedulerRun() {
+    return false; // scheduler is off in mock mode
+  },
+  async resetStuckScripting() {
+    return 0;
+  },
+  async retryFailedScripts() {
+    return 0;
+  },
+  async previewsToCleanup() {
+    return [];
+  },
+  async clearPreview() {},
   async saveDiscovery(plan) {
     const nowIso = new Date().toISOString();
     const idByVideo = new Map<string, string>();
