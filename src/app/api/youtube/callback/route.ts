@@ -3,6 +3,7 @@ import { HttpError } from "@/lib/api";
 import { safeEqual } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
 import { getStore } from "@/lib/data";
+import { queueApprovedUploads } from "@/lib/publish";
 import { fetchMyChannel, forgetAccessToken } from "@/lib/youtube/channel";
 import { STATE_COOKIE, exchangeCode } from "@/lib/youtube/oauth";
 
@@ -33,6 +34,7 @@ export async function GET(req: Request) {
     });
     forgetAccessToken();
     console.info(`[youtube] connected channel "${channel.title}" (${channel.id})`);
+    await queueApprovedUploads(); // anything approved while disconnected uploads now
     return back(`youtube=connected`);
   } catch (err) {
     console.error("[youtube] callback failed:", err);

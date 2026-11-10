@@ -45,6 +45,8 @@ export interface Store {
   /** Queues a job unless one is already queued/running for this clip+type */
   enqueueJob(clipId: string, type: JobType): Promise<void>;
   cancelQueuedJobs(clipId: string, type: JobType): Promise<number>;
+  /** Ends a job without touching the clip (e.g. upload cancelled because the clip was un-approved) */
+  finishJob(jobId: string, status: "done" | "failed", error?: string): Promise<void>;
 
   /* ---- YouTube ---- */
   getYouTubeCredentials(): Promise<{ refreshTokenEnc: string | null; channelId: string | null; channelTitle: string | null }>;

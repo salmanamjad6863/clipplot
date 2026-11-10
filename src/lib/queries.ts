@@ -154,6 +154,18 @@ export function useSettings() {
   return hydrationSafe(useQuery({ queryKey: queryKeys.settings, queryFn: () => api<Settings>("/api/settings") }), hydrated);
 }
 
+export function useDisconnectYouTube() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<{ ok: true }>("/api/youtube/disconnect", { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.settings });
+      toast.success("YouTube disconnected");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+}
+
 export function useSaveSettings() {
   const qc = useQueryClient();
   return useMutation({

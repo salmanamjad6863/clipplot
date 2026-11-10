@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Reorder, motion, useDragControls } from "motion/react";
 import clsx from "clsx";
 import { Clapperboard, Copy, GripVertical, Radar, Save, Smartphone, Timer, SquarePlay } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, Segmented, Toggle, ease, inputCls } from "@/components/ui";
 import { GAMES_BY_SLUG } from "@/lib/games";
-import { useSaveSettings, useSettings } from "@/lib/queries";
+import { useDisconnectYouTube, useSaveSettings, useSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
 export default function SettingsPage() {
@@ -32,7 +32,13 @@ function SettingsForm({ initial }: { initial: Settings }) {
     <>
       <PageHeader title="Settings">
         <button
-          onClick={() => save.mutate(s)}
+          onClick={() => {
+            // send only what changed (formats as a whole object when any part changed)
+            const changed = Object.fromEntries(
+              Object.entries(s).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(initial[k as keyof Settings])),
+            ) as Partial<Settings>;
+            save.mutate(changed);
+          }}
           disabled={!dirty || save.isPending}
           className="inline-flex items-center gap-2 rounded-full bg-sunset px-5 py-2 text-sm font-medium text-bg transition-transform enabled:hover:scale-105 enabled:active:scale-95 disabled:opacity-40"
         >
@@ -148,21 +154,75 @@ function SettingsForm({ initial }: { initial: Settings }) {
             <span className="text-xs text-muted">Daily upload time (UTC)</span>
             <input type="time" value={s.uploadTime} onChange={(e) => set("uploadTime", e.target.value)} className={`${inputCls} mt-1.5 w-40`} />
           </label>
-          <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-border p-3">
-            <div>
-              <p className="text-sm font-medium">YouTube channel</p>
-              <p className="text-xs text-muted">{s.youtubeConnected ? "Connected" : "Not connected — set up in Step 6"}</p>
+          <YouTubeConnection connected={s.youtubeConnected} channelTitle={s.youtubeChannelTitle} />
+          <div className="mt-4">
+            <p className="text-xs text-muted">Upload visibility</p>
+            <div className="mt-1.5">
+              <Segmented
+                id="privacy"
+                value={s.youtubePrivacy}
+                onChange={(v) => set("youtubePrivacy", v)}
+                options={[
+                  { value: "private", label: "Private" },
+                  { value: "unlisted", label: "Unlisted" },
+                  { value: "public", label: "Public" },
+                ]}
+              />
             </div>
-            <button
-              onClick={() => toast.info("YouTube connect arrives in Step 6")}
-              className="rounded-full border border-border px-4 py-1.5 text-xs transition hover:bg-white/5"
-            >
-              Connect
-            </button>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted">
+              Until your Google Cloud project passes YouTube&apos;s API audit, YouTube locks API uploads to{" "}
+              <b className="text-fg/80">private</b> — publish them by hand in YouTube Studio, or request the audit.
+            </p>
           </div>
         </Card>
       </div>
     </>
+  );
+}
+
+function YouTubeConnection({ connected, channelTitle }: { connected: boolean; channelTitle?: string }) {
+  const disconnect = useDisconnectYouTube();
+
+  // result of the Google redirect (?youtube=connected / ?youtube_error=...)
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("youtube") === "connected") toast.success("YouTube channel connected");
+    const err = q.get("youtube_error");
+    if (err) toast.error(err);
+    if (q.has("youtube") || err) window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+
+  return (
+    <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-border p-3">
+      <div className="min-w-0">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          YouTube channel
+          <span className={clsx("h-2 w-2 rounded-full", connected ? "bg-success shadow-[0_0_8px_var(--success)]" : "bg-white/20")} />
+        </p>
+        <p className="truncate text-xs text-muted">
+          {connected ? `Connected: ${channelTitle ?? "your channel"}` : "Not connected — approved videos wait until you connect"}
+        </p>
+      </div>
+      {connected ? (
+        <button
+          onClick={() => {
+            if (confirm("Disconnect YouTube? Queued uploads will wait until you reconnect.")) disconnect.mutate();
+          }}
+          disabled={disconnect.isPending}
+          className="shrink-0 rounded-full border border-border px-4 py-1.5 text-xs text-muted transition hover:bg-white/5 hover:text-fg disabled:opacity-50"
+        >
+          Disconnect
+        </button>
+      ) : (
+        // full navigation: Google's consent screen, then back to /settings
+        <a
+          href="/api/youtube/connect"
+          className="shrink-0 rounded-full bg-sunset px-4 py-1.5 text-xs font-medium text-bg transition-transform hover:scale-105"
+        >
+          Connect YouTube
+        </a>
+      )}
+    </div>
   );
 }
 

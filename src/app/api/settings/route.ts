@@ -32,6 +32,9 @@ function validate(body: Partial<Settings>) {
   if (body.lookbackHours !== undefined && !int(body.lookbackHours, 1, 168)) errors.push("Look back must be 1–168 hours");
   if (body.maxFallbackDepth !== undefined && !int(body.maxFallbackDepth, 1, 8)) errors.push("Fallback depth must be 1–8");
   if (body.minViewsPerHour !== undefined && !int(body.minViewsPerHour, 0, 10_000_000)) errors.push("Invalid min views/hour");
+  if (body.youtubePrivacy !== undefined && !["private", "unlisted", "public"].includes(body.youtubePrivacy)) {
+    errors.push("Visibility must be private, unlisted or public");
+  }
   if (body.uploadTime !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(body.uploadTime)) errors.push("Upload time must be HH:MM");
   return errors;
 }
@@ -41,6 +44,7 @@ export async function PUT(req: Request) {
     const body = (await req.json().catch(() => ({}))) as Partial<Settings>;
     // youtubeConnected is derived server-side, never set by the client
     delete body.youtubeConnected;
+    delete body.youtubeChannelTitle;
     const errors = validate(body);
     if (errors.length) throw new HttpError(400, errors.join(". "));
     return getStore().updateSettings(body);

@@ -26,6 +26,17 @@ for (const table of ["settings", "games", "trends", "clips", "jobs"]) {
   }
 }
 
+// Migration 0002 (YouTube publishing) applied?
+if (ok) {
+  const { error } = await sb.from("settings").select("youtube_privacy, youtube_channel_title").limit(1);
+  console.log(error ? "✗ migration 0002 not applied — run supabase/migrations/0002_youtube.sql" : "✓ migration 0002 (YouTube) applied");
+  if (error) ok = false;
+  const { data: buckets } = await sb.storage.listBuckets();
+  const hasBucket = buckets?.some((b) => b.name === "renders");
+  console.log(hasBucket ? '✓ storage bucket "renders"' : '✗ storage bucket "renders" missing — run pnpm db:seed');
+  if (!hasBucket) ok = false;
+}
+
 // Publishable key must NOT be able to read data (RLS on, no policies)
 const pub = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 if (pub && ok) {

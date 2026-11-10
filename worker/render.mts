@@ -16,6 +16,8 @@ const TAIL = 0.8;
 const BRAND = process.env.WORKER_BRAND ?? "ClipPilot";
 const PREVIEW_MAX_MB = 45; // Supabase free-tier file limit is 50 MB
 
+export const fullPathFor = (clip: Pick<Clip, "id" | "format">) => path.join(OUTPUT_DIR, clip.id, `${clip.format}-full.mp4`);
+
 export interface RenderResult {
   fullPath: string;
   previewPath: string;
@@ -118,7 +120,7 @@ export async function renderClip(clip: Clip, log: (m: string) => void = console.
     mix,
   ].join(";");
 
-  const fullPath = path.join(OUTPUT_DIR, clip.id, `${clip.format}-full.mp4`);
+  const fullPath = fullPathFor(clip);
   log("encoding full quality…");
   await ffmpeg([
     ...bgInput,

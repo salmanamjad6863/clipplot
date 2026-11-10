@@ -156,8 +156,15 @@ Dashboard (TanStack Query, polls)
   -14 LUFS. Full quality stays in `worker/output/<clipId>/`; a ≤45 MB preview is uploaded to Supabase
   Storage (`renders` bucket) via signed URL → clip goes to review. 3 retries, stale jobs reclaimed after 30 min.
   **R2 dropped** — not needed (worker uploads to YouTube itself in Step 6). `pnpm worker --local clip.json` renders offline.
-- [ ] **Step 6 — YouTube OAuth + upload**
-  Connect channel (Google OAuth, `youtube.upload` scope), store refresh token encrypted, worker does the resumable upload of the full local MP4, set title/description/game hashtags/#Shorts, privacy setting; auto-create per-game playlist and add each Short to it.
+- [x] **Step 6 — YouTube connect + upload** (code done; live test needs Google OAuth client + migration 0002)
+  Settings → "Connect YouTube" → Google OAuth (scope `youtube`, offline) → refresh token AES-256-GCM encrypted
+  (`TOKEN_ENCRYPTION_KEY`) in `settings`; channel name shown; Disconnect revokes. Approve → upload job queued
+  (if autopilot off; with autopilot on it waits for the daily slot — Step 7). Worker gets a 1-hour access token
+  + metadata from `/api/worker/upload-plan`, does a resumable 8 MB-chunk upload of the full local MP4
+  (re-renders if the file is missing), then `/api/worker/published` marks it published and adds it to the
+  game's playlist ("GTA 6 Shorts" / "GTA 6 — Full Videos", created on first use, recreated if deleted).
+  Category Gaming, not made for kids, #Shorts only on Shorts, visibility private/unlisted/public in Settings.
+  Tests: `pnpm test` (incl. fake-YouTube upload with a mid-upload 503).
 - [ ] **Step 7 — Daily autopilot**
   Vercel Cron config, daily slot scheduling, "auto-upload approved" toggle, retry/failure handling, preview cleanup after publish.
 - [ ] **Step 8 — Polish & deploy**

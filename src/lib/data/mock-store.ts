@@ -133,6 +133,7 @@ export const mockStore: Store = {
     return { final: true };
   },
   async enqueueJob() {},
+  async finishJob() {},
   async cancelQueuedJobs() {
     return 0;
   },

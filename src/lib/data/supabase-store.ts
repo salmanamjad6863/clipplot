@@ -502,7 +502,8 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
         .eq("id", jobId);
       if (e2) fail("fail job", e2);
       if (final) {
-        await sb.from("clips").update({ status: "failed", error: `Render: ${message}`.slice(0, 500) }).eq("id", job.clip_id);
+        const label = job.type === "upload" ? "Upload" : job.type === "render" ? "Render" : "Job";
+        await sb.from("clips").update({ status: "failed", error: `${label}: ${message}`.slice(0, 500) }).eq("id", job.clip_id);
       }
       return { final };
     },
@@ -511,6 +512,11 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
       const { error } = await sb.from("jobs").insert({ clip_id: clipId, type });
       // 23505 = unique index jobs_one_active_per_clip: already queued/running → fine
       if (error && error.code !== "23505") fail("queue job", error);
+    },
+
+    async finishJob(jobId, status, message) {
+      const { error } = await sb.from("jobs").update({ status, error: message ?? null }).eq("id", jobId);
+      if (error) fail("finish job", error);
     },
 
     async cancelQueuedJobs(clipId, type) {

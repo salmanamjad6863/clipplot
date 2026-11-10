@@ -11,8 +11,9 @@
     "db:check": "node --env-file=.env.local scripts/db-check.mjs",
     "db:seed": "node --no-warnings --env-file=.env.local scripts/db-seed.ts",
     "test:discovery": "tsx scripts/discovery-check.mts",
-    "test": "pnpm test:dedupe && pnpm test:discovery",
-    "worker": "node --no-warnings --env-file=.env.local --import tsx worker/index.mts"
+    "test": "pnpm test:dedupe && pnpm test:discovery && pnpm test:upload",
+    "worker": "node --no-warnings --env-file=.env.local --import tsx worker/index.mts",
+    "test:upload": "tsx scripts/upload-check.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.7.0",
