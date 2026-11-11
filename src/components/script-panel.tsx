@@ -7,8 +7,8 @@ import clsx from "clsx";
 import { AlertTriangle, Clapperboard, Copy, Lightbulb, MessageSquareQuote, RefreshCw, Shuffle, ShieldAlert, Type } from "lucide-react";
 import { toast } from "sonner";
 import { formatDuration } from "@/lib/format";
-import { useRegenerateScript, useSwapTrend } from "@/lib/queries";
-import type { Clip } from "@/lib/types";
+import { useClipVoice, useRegenerateScript, useSettings, useSwapTrend } from "@/lib/queries";
+import { VOICES, type Clip } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
 import { ease, inputCls } from "./ui";
 
@@ -28,6 +28,9 @@ const LOCKED = ["scheduled", "published"];
 export function ScriptPanel({ clip }: { clip: Clip }) {
   const regen = useRegenerateScript();
   const swap = useSwapTrend();
+  const voice = useClipVoice();
+  const settings = useSettings();
+  const defaultVoice = VOICES.find((v) => v.id === settings.data?.render.voice)?.label.split(" — ")[0] ?? "Settings";
   const router = useRouter();
   const [dialog, setDialog] = useState<"regen" | "swap" | null>(null);
   const [note, setNote] = useState("");
@@ -41,7 +44,26 @@ export function ScriptPanel({ clip }: { clip: Clip }) {
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-muted">Script</h3>
         {!LOCKED.includes(clip.status) && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
+            {s && (
+              <select
+                aria-label="Voice for this video"
+                title="Voice for this video only — re-renders it (no new script)"
+                value={s.voice ?? ""}
+                disabled={busy || voice.isPending || clip.status === "rendering"}
+                onChange={(e) => voice.mutate({ id: clip.id, voice: e.target.value || null })}
+                className="cursor-pointer rounded-full border border-border bg-transparent px-3 py-1.5 text-xs text-fg/90 transition hover:bg-white/5 disabled:opacity-50"
+              >
+                <option value="" className="bg-bg-elev">
+                  Voice: default ({defaultVoice})
+                </option>
+                {VOICES.map((v) => (
+                  <option key={v.id} value={v.id} className="bg-bg-elev">
+                    Voice: {v.label}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               onClick={() => setDialog("swap")}
               disabled={busy || swap.isPending}

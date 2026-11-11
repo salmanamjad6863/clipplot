@@ -25,6 +25,10 @@ export type ClipStatus =
 export type VideoFormat = "short" | "long";
 
 export interface ClipScript {
+  /** Narrator voice for this clip only (VOICES id); unset = Settings default */
+  voice?: string;
+  /** Rendered from the source creator's video (test mode) — never uploaded */
+  testRender?: boolean;
   angle: string;
   thumbnailText: string;
   segments: { startSec: number; voiceover: string; onScreenText: string; visual: string; emphasis?: string[] }[];
@@ -69,6 +73,8 @@ export interface Clip {
   /** Rendered video stored in R2 */
   renderUrl?: string;
   youtubeUrl?: string;
+  /** Live upload status for approved clips: queued = waiting for the worker, uploading = worker is sending it now */
+  uploadState?: "queued" | "uploading";
   youtubeVideoId?: string;
   /** Performance (refreshed every few hours after publishing) */
   views?: number;
@@ -120,15 +126,16 @@ export interface FormatSettings {
 
 /** How the worker builds each video — editable in Settings → Video & copyright */
 export interface RenderSettings {
-  /** auto = your footage from worker/footage/<game>/ when present, else gradient; gradient = never use footage */
-  footageMode: "auto" | "gradient";
+  /** auto = your footage from worker/footage/<game>/ when present, else gradient; gradient = never use footage;
+   *  source = TEST ONLY: cut up the trend's own YouTube video (local preview; YouTube upload is blocked) */
+  footageMode: "auto" | "gradient" | "source";
   /** Longest continuous piece of any footage file, in seconds (0 = no limit, one continuous piece) */
   maxCutSec: number;
   /** Keep the footage's own sound under the voiceover (off = picture only — far fewer Content ID matches) */
   keepFootageAudio: boolean;
   /** Footage sound level when kept, 0–100 % */
   footageVolume: number;
-  /** macOS voice name (`say -v '?'`) */
+  /** VOICES id: "kokoro:<voice>" (neural) or a macOS voice name (`say -v '?'`) */
   voice: string;
   /** Speaking speed, words per minute */
   voiceRate: number;
@@ -143,13 +150,25 @@ export const DEFAULT_RENDER: RenderSettings = {
   maxCutSec: 3,
   keepFootageAudio: false,
   footageVolume: 15,
-  voice: "Samantha",
+  voice: "kokoro:am_michael",
   voiceRate: 185,
   captionWords: 3,
   brandText: "ClipPilot",
 };
 
-export const VOICES = ["Samantha", "Daniel", "Karen", "Moira", "Tessa", "Rishi", "Fred"] as const;
+/** Narrator voices. "kokoro:*" = free neural voices (natural, run on your Mac); others = macOS `say` voices. */
+export const isVoiceId = (v: string) => /^(kokoro:[a-z]{2}_[a-z]{2,20}|[A-Za-z][A-Za-z ()'.-]{0,40})$/.test(v);
+
+export const VOICES = [
+  { id: "kokoro:af_heart", label: "Heart — US female (most natural)" },
+  { id: "kokoro:af_bella", label: "Bella — US female, energetic" },
+  { id: "kokoro:am_michael", label: "Michael — US male" },
+  { id: "kokoro:am_fenrir", label: "Fenrir — US male, deep" },
+  { id: "kokoro:am_puck", label: "Puck — US male, upbeat" },
+  { id: "kokoro:bf_emma", label: "Emma — UK female" },
+  { id: "kokoro:bm_george", label: "George — UK male" },
+  { id: "Samantha", label: "Samantha — Mac voice (robotic)" },
+] as const;
 
 export interface Settings {
   autopilot: boolean;

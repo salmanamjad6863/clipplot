@@ -170,6 +170,14 @@ export const mockStore: Store = {
   async saveStats() {},
   async markCommentPosted() {},
   async saveChapters() {},
+  async markTestRender() {},
+  async setVoiceAndRerender(id, voice) {
+    const c = clips.find((x) => x.id === id);
+    if (!c || !c.script) return null;
+    c.script = { ...c.script, voice: voice ?? undefined };
+    c.status = "rendering";
+    return c;
+  },
   async claimSchedulerRun() {
     return false; // scheduler is off in mock mode
   },

@@ -23,6 +23,7 @@ export async function scriptClip(clip: Clip, note?: string): Promise<Clip | null
       tags: r.tags,
       riskScore: r.riskScore,
       script: {
+        voice: clip.script?.voice, // keep a per-clip voice choice across rewrites
         angle: r.angle,
         thumbnailText: r.thumbnailText,
         segments: r.segments,

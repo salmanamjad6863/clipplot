@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useState } from "react";
 import { motion } from "motion/react";
-import { ArrowLeft, ExternalLink, Flame, Save, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, Flame, Loader2, RefreshCw, Save, ShieldAlert } from "lucide-react";
 import { ApproveSkip, Thumb } from "@/components/clip-card";
 import { GameChip } from "@/components/game-chip";
 import { ScriptPanel } from "@/components/script-panel";
 import { EmptyState, FormatBadge, StatusPill, ease, inputCls } from "@/components/ui";
 import { formatDuration } from "@/lib/format";
-import { useClip, useTopicMap, useTrends, useUpdateClip } from "@/lib/queries";
+import { useClip, useClipVoice, useTopicMap, useTrends, useUpdateClip } from "@/lib/queries";
 import { FORMAT_META, type Clip } from "@/lib/types";
 
 export function ReviewDetail({ id }: { id: string }) {
@@ -97,6 +97,8 @@ function Detail({ clip }: { clip: Clip }) {
             </span>
           </div>
 
+          <PublishStatus clip={clip} />
+
           <p className="mt-4 text-sm text-muted">
             Hook: <span className="text-fg">“{clip.hook}”</span>
           </p>
@@ -164,4 +166,87 @@ function Detail({ clip }: { clip: Clip }) {
       </div>
     </>
   );
+}
+
+/** Where this video is: test render, waiting / uploading to YouTube, or live with its link. */
+function PublishStatus({ clip }: { clip: Clip }) {
+  const rerender = useClipVoice();
+  if (clip.status === "published" && clip.youtubeUrl) {
+    return (
+      <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm">
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+        <span className="min-w-0 flex-1">
+          On YouTube:{" "}
+          <a href={clip.youtubeUrl} target="_blank" rel="noreferrer" className="break-all font-mono text-xs underline hover:text-fg">
+            {clip.youtubeUrl}
+          </a>
+        </span>
+        <a
+          href={clip.youtubeUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs hover:bg-white/15"
+        >
+          Watch <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+        {clip.youtubeVideoId && (
+          <a
+            href={`https://studio.youtube.com/video/${clip.youtubeVideoId}/edit`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs hover:bg-white/5"
+          >
+            YouTube Studio <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        )}
+      </div>
+    );
+  }
+  if (clip.status === "scheduled") {
+    const uploading = clip.uploadState === "uploading";
+    return (
+      <div className="mt-4 flex items-start gap-3 rounded-xl border border-violet/30 bg-violet/10 px-4 py-3 text-sm">
+        <Loader2 className={`mt-0.5 h-4 w-4 shrink-0 ${uploading ? "animate-spin text-violet" : "text-muted"}`} />
+        <div>
+          <p className="font-medium">{uploading ? "Uploading to YouTube…" : clip.uploadState === "queued" ? "Approved — waiting for the worker" : "Approved — waiting for the next upload slot"}</p>
+          <p className="mt-0.5 text-xs text-muted">
+            {uploading
+              ? "The worker on your Mac is sending it now. The YouTube link appears here when it's done."
+              : "Uploads start when the worker is running on your Mac (pnpm worker). This page updates by itself."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  if (clip.script?.testRender) {
+    return (
+      <div className="mt-4 flex flex-wrap items-start gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">Test render — made from the source creator&apos;s video</p>
+          <p className="mt-0.5 text-xs text-muted">
+            It can&apos;t be uploaded. To publish: Settings → Background footage → My footage, then re-render.
+          </p>
+        </div>
+        {["awaiting_approval", "rejected", "failed"].includes(clip.status) && (
+          <button
+            onClick={() => rerender.mutate({ id: clip.id, voice: clip.script?.voice ?? null })}
+            disabled={rerender.isPending}
+            className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs hover:bg-white/5 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${rerender.isPending ? "animate-spin" : ""}`} /> Re-render
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (clip.status === "failed" && clip.error) {
+    return (
+      <div className="mt-4 flex items-start gap-3 rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+        <p className="min-w-0 break-words text-xs">{clip.error}</p>
+      </div>
+    );
+  }
+  return null;
 }

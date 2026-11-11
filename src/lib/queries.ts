@@ -49,7 +49,7 @@ export function useClips() {
     queryFn: () => api<Clip[]>("/api/clips"),
     // Keep status live while things are rendering
     refetchInterval: (q) =>
-      q.state.data?.some((c) => ["discovered", "scripting", "rendering"].includes(c.status)) ? 15_000 : false,
+      q.state.data?.some((c) => ["discovered", "scripting", "rendering"].includes(c.status) || c.uploadState) ? 10_000 : false,
   });
   return hydrationSafe(q, hydrated);
 }
@@ -61,6 +61,11 @@ export function useClip(id: string) {
     queryKey: queryKeys.clip(id),
     queryFn: () => api<Clip>(`/api/clips/${id}`),
     initialData: () => qc.getQueryData<Clip[]>(queryKeys.clips)?.find((c) => c.id === id),
+    // live while it renders or uploads
+    refetchInterval: (q) => {
+      const c = q.state.data;
+      return c && (["scripting", "rendering"].includes(c.status) || c.uploadState) ? 5_000 : false;
+    },
   });
   return hydrationSafe(q, hydrated);
 }
@@ -178,6 +183,21 @@ export function useClipFromTrend() {
       toast.success("Clip created — Claude is writing the script", { description: clip.title });
     },
     onError: (err) => toast.error(err.message),
+  });
+}
+
+/** Change one clip's voice → re-render it */
+export function useClipVoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, voice }: { id: string; voice: string | null }) =>
+      api<Clip>(`/api/clips/${id}/voice`, { method: "POST", body: JSON.stringify({ voice }) }),
+    onSuccess: (clip) => {
+      qc.setQueryData(queryKeys.clip(clip.id), clip);
+      toast.success("Re-rendering with the new voice", { description: "Takes about a minute (worker must be running)" });
+    },
+    onError: (err) => toast.error(err.message),
+    onSettled: () => qc.invalidateQueries({ queryKey: queryKeys.clips }),
   });
 }
 

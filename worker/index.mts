@@ -15,7 +15,7 @@ import os from "node:os";
 import { createClient } from "@supabase/supabase-js";
 import { DEFAULT_RENDER, type Clip, type RenderSettings } from "../src/lib/types.ts";
 import { run } from "./proc.mts";
-import { OUTPUT_DIR, fullPathFor, renderClip, thumbPathFor } from "./render.mts";
+import { OUTPUT_DIR, fullPathFor, renderClip, sourceFlagFor, thumbPathFor } from "./render.mts";
 import { setThumbnail, uploadToYouTube, type UploadMetadata } from "./youtube.mts";
 
 const API = (process.env.CLIPPILOT_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -67,7 +67,7 @@ async function processOne(type: JobKind): Promise<boolean> {
       const r = await renderClip(clip, (m) => log(`  ${m}`), render);
       log("  uploading preview…");
       await uploadPreview(job.id, r.previewPath);
-      await call("complete", { jobId: job.id, durationSec: r.durationSec, chapters: r.chapters });
+      await call("complete", { jobId: job.id, durationSec: r.durationSec, chapters: r.chapters, testRender: r.testRender });
       log(`✓ rendered in ${((Date.now() - started) / 1000).toFixed(0)}s → ${r.fullPath}`);
     } else {
       // full-quality file from the render step; re-render if it was deleted or rendered elsewhere
@@ -75,6 +75,9 @@ async function processOne(type: JobKind): Promise<boolean> {
       if (!existsSync(file)) {
         log("  full video not on this machine — re-rendering it first");
         file = (await renderClip(clip, (m) => log(`  ${m}`), render)).fullPath;
+      }
+      if (existsSync(sourceFlagFor(clip))) {
+        throw new Error("Test render made from the source creator's video — not uploaded. Set Background footage to My footage and Regenerate to publish.");
       }
       const plan = await call<{ accessToken: string; channel: string | null; metadata: UploadMetadata }>("upload-plan", { jobId: job.id });
       log(`  uploading to YouTube${plan.channel ? ` (${plan.channel})` : ""} as ${String(plan.metadata.status.privacyStatus)}…`);

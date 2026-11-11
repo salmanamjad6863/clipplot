@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { motion } from "motion/react";
-import { ExternalLink, Eye, MessageCircle, ThumbsUp } from "lucide-react";
+import { ExternalLink, Eye, Loader2, MessageCircle, ThumbsUp } from "lucide-react";
 import clsx from "clsx";
 import { GameChip } from "@/components/game-chip";
 import { FilterBar, applyFilters, type FormatFilter } from "@/components/filter-bar";
@@ -67,9 +67,19 @@ export default function LibraryPage() {
                   {timeAgo(c.publishedAt ?? c.scheduledFor ?? c.createdAt)}
                 </span>
                 {c.youtubeUrl ? (
-                  <a href={c.youtubeUrl} target="_blank" rel="noreferrer" className="text-muted hover:text-fg" aria-label="Open on YouTube">
-                    <ExternalLink className="h-4 w-4" />
+                  <a
+                    href={c.youtubeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-xs text-fg/90 hover:bg-white/15"
+                  >
+                    Watch <ExternalLink className="h-3.5 w-3.5" />
                   </a>
+                ) : c.uploadState ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-violet">
+                    <Loader2 className={`h-3.5 w-3.5 ${c.uploadState === "uploading" ? "animate-spin" : ""}`} />
+                    {c.uploadState === "uploading" ? "Uploading…" : "Waiting for worker"}
+                  </span>
                 ) : (
                   <span className="w-4" />
                 )}

@@ -275,7 +275,7 @@ function WorkspaceCard() {
 
 /** How the worker builds every video. Applied to the next render (re-render a clip to apply to it). */
 function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderSettings>) => void }) {
-  const voiceKnown = (VOICES as readonly string[]).includes(r.voice);
+  const voiceKnown = VOICES.some((v) => v.id === r.voice);
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <div className="space-y-4">
@@ -289,16 +289,23 @@ function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderS
               options={[
                 { value: "auto", label: "My footage (cut up)" },
                 { value: "gradient", label: "Gradient only" },
+                { value: "source", label: "Source video (test)" },
               ]}
             />
           </div>
+          {r.footageMode === "source" && (
+            <p className="mt-1.5 text-[11px] text-amber-300">
+              Test mode: cuts up the trending video itself (needs yt-dlp on your Mac). Preview only — YouTube upload is blocked
+              for these renders.
+            </p>
+          )}
           <p className="mt-1.5 text-[11px] text-muted">
             Footage comes from <code className="text-fg/70">worker/footage/&lt;game&gt;/</code> on your Mac — your own gameplay or
             short official trailer clips. No footage → animated gradient.
           </p>
         </div>
 
-        <motion.div animate={{ opacity: r.footageMode === "auto" ? 1 : 0.35 }} className={clsx("space-y-4", r.footageMode !== "auto" && "pointer-events-none")}>
+        <motion.div animate={{ opacity: r.footageMode !== "gradient" ? 1 : 0.35 }} className={clsx("space-y-4", r.footageMode === "gradient" && "pointer-events-none")}>
           <label className="block">
             <span className="flex justify-between text-xs text-muted">
               Max seconds per footage cut
@@ -354,8 +361,8 @@ function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderS
               className={`${inputCls} mt-1.5 cursor-pointer`}
             >
               {VOICES.map((v) => (
-                <option key={v} value={v} className="bg-bg-elev">
-                  {v}
+                <option key={v.id} value={v.id} className="bg-bg-elev">
+                  {v.label}
                 </option>
               ))}
               <option value="__custom" className="bg-bg-elev">
@@ -385,7 +392,7 @@ function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderS
           />
         )}
         <p className="-mt-2 text-[11px] text-muted">
-          Voices are the ones installed on your Mac (<code className="text-fg/70">say -v &apos;?&apos;</code>). Missing voice → Samantha.
+          Natural voices are generated free on your Mac (first render downloads the ~90 MB voice model once).
         </p>
 
         <div className="grid grid-cols-2 gap-3">

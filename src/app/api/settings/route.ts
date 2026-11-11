@@ -3,7 +3,7 @@ import { currentWorkspaceId } from "@/lib/workspaces";
 import { HttpError, handle } from "@/lib/api";
 import { getStore } from "@/lib/data";
 import { scheduleFor } from "@/lib/schedule-time";
-import type { Settings } from "@/lib/types";
+import { isVoiceId, type Settings } from "@/lib/types";
 
 async function withSchedule(settings: Settings): Promise<Settings> {
   try {
@@ -73,12 +73,12 @@ function validate(body: Partial<Settings>) {
   }
   if (body.render) {
     const r = body.render;
-    if (r.footageMode !== undefined && !["auto", "gradient"].includes(r.footageMode)) errors.push("Footage mode must be auto or gradient");
+    if (r.footageMode !== undefined && !["auto", "gradient", "source"].includes(r.footageMode)) errors.push("Footage mode must be auto, gradient or source");
     if (r.maxCutSec !== undefined && !int(r.maxCutSec, 0, 60)) errors.push("Max cut length must be 0–60 seconds");
     if (r.footageVolume !== undefined && !int(r.footageVolume, 0, 100)) errors.push("Footage volume must be 0–100");
     if (r.voiceRate !== undefined && !int(r.voiceRate, 120, 260)) errors.push("Voice speed must be 120–260 wpm");
     if (r.captionWords !== undefined && !int(r.captionWords, 1, 8)) errors.push("Caption words must be 1–8");
-    if (r.voice !== undefined && !/^[A-Za-z][A-Za-z ()'.-]{0,40}$/.test(r.voice)) errors.push("Invalid voice name");
+    if (r.voice !== undefined && !isVoiceId(r.voice)) errors.push("Invalid voice name");
     if (r.brandText !== undefined && (typeof r.brandText !== "string" || r.brandText.length > 30)) errors.push("Watermark max 30 characters");
     if (r.keepFootageAudio !== undefined && typeof r.keepFootageAudio !== "boolean") errors.push("Invalid footage audio option");
   }

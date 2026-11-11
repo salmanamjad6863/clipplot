@@ -45,3 +45,4 @@ next-env.d.ts
 /worker/output/
 /worker/footage/**
 !/worker/footage/README.md
+/worker/cache/

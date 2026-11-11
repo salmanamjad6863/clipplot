@@ -233,6 +233,15 @@ export function supabaseAdmin(url: string, secretKey: string): SupabaseClient {
  */
 export function createSupabaseStore(url: string, secretKey: string, ws: string): Store {
   const sb = supabaseAdmin(url, secretKey);
+
+  /** Adds the live upload-job state to approved clips (queued → waiting for the worker, running → uploading). */
+  async function withUploadState(clips: Clip[]): Promise<Clip[]> {
+    const ids = clips.filter((c) => c.status === "scheduled").map((c) => c.id);
+    if (!ids.length) return clips;
+    const { data } = await sb.from("jobs").select("clip_id,status").eq("type", "upload").in("status", ["queued", "running"]).in("clip_id", ids);
+    const state = new Map((data ?? []).map((j: { clip_id: string; status: string }) => [j.clip_id, j.status]));
+    return clips.map((c) => (state.has(c.id) ? { ...c, uploadState: state.get(c.id) === "running" ? "uploading" : "queued" } : c));
+  }
   // every clips/trends read/update/delete goes through these, so the workspace filter can't be forgotten
   const scope = (table: "clips" | "trends") => ({
     select: (cols: string, opts?: { count?: "exact" }) => sb.from(table).select(cols, opts).eq("workspace_id", ws),
@@ -284,14 +293,14 @@ export function createSupabaseStore(url: string, secretKey: string, ws: string):
     async listClips() {
       const { data, error } = await scoped.clips.select("*").order("created_at", { ascending: false }).limit(500).returns<ClipRow[]>();
       if (error) fail("clips", error);
-      return data.map(toClip);
+      return withUploadState(data.map(toClip));
     },
 
     async getClip(id) {
       if (!UUID_RE.test(id)) return null;
       const { data, error } = await scoped.clips.select("*").eq("id", id).maybeSingle<ClipRow>();
       if (error) fail("clip", error);
-      return data ? toClip(data) : null;
+      return data ? (await withUploadState([toClip(data)]))[0] : null;
     },
 
     async updateClip(id, patch) {
@@ -760,6 +769,35 @@ export function createSupabaseStore(url: string, secretKey: string, ws: string):
       if (!script) return;
       const { error: e2 } = await scoped.clips.update({ script: JSON.stringify({ ...script, chapters }) }).eq("id", clipId);
       if (e2) fail("save chapters", e2);
+    },
+
+    async markTestRender(clipId, on) {
+      const { data, error } = await scoped.clips.select("script").eq("id", clipId).maybeSingle<{ script: string | null }>();
+      if (error) fail("read script", error);
+      const script = parseScript(data?.script ?? null);
+      if (!script || Boolean(script.testRender) === on) return;
+      const { error: e2 } = await scoped.clips.update({ script: JSON.stringify({ ...script, testRender: on || undefined }) }).eq("id", clipId);
+      if (e2) fail("save test flag", e2);
+    },
+
+    async setVoiceAndRerender(clipId, voice) {
+      const { data, error } = await scoped.clips.select("script").eq("id", clipId).maybeSingle<{ script: string | null }>();
+      if (error) fail("read script", error);
+      const script = parseScript(data?.script ?? null);
+      if (!script) return null;
+      const { data: row, error: e2 } = await scoped.clips
+        .update({ script: JSON.stringify({ ...script, voice: voice ?? undefined }), status: "rendering", error: null })
+        .eq("id", clipId)
+        .select("*")
+        .maybeSingle<ClipRow>();
+      if (e2) fail("save voice", e2);
+      if (!row) return null;
+      const { data: existing } = await sb.from("jobs").select("id").eq("clip_id", clipId).eq("type", "render").eq("status", "queued").limit(1);
+      if (!existing?.length) {
+        const { error: e3 } = await sb.from("jobs").insert({ clip_id: clipId, type: "render" });
+        if (e3) fail("queue render job", e3);
+      }
+      return toClip(row);
     },
 
     /* ---------- scheduler ---------- */

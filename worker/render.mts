@@ -22,6 +22,8 @@ export interface RenderResult {
   fullPath: string;
   previewPath: string;
   durationSec: number;
+  /** Background was cut from the source creator's video (test mode) — never uploaded */
+  testRender: boolean;
   /** Footage files used for the background (empty = gradient) */
   usedFootage: string[];
   /** Number of footage cuts in the montage */
@@ -77,6 +79,40 @@ async function listFootage(game: string): Promise<string[]> {
   const dir = path.join(FOOTAGE_DIR, game);
   if (!existsSync(dir)) return [];
   return (await readdir(dir)).filter((f) => /\.(mp4|mov|mkv|webm)$/i.test(f)).map((f) => path.join(dir, f));
+}
+
+/** Marker in a clip's output folder: rendered from the source creator's video → never uploaded. */
+export const sourceFlagFor = (clip: Pick<Clip, "id" | "format">) => path.join(path.dirname(fullPathFor(clip)), "SOURCE_FOOTAGE");
+const SOURCE_DIR = path.join(ROOT, "cache", "sources");
+
+function youtubeId(url: string): string | null {
+  const m = url.match(/(?:v=|youtu\.be\/|shorts\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+
+/** TEST ONLY: download (≤720p, first 15 min) the trend's own video with yt-dlp. */
+async function sourceFootage(clip: Clip, log: (m: string) => void): Promise<string[]> {
+  const id = youtubeId(clip.trendUrl ?? "");
+  if (!id) return [];
+  const file = path.join(SOURCE_DIR, `${id}.mp4`);
+  if (!existsSync(file)) {
+    await mkdir(SOURCE_DIR, { recursive: true });
+    log(`footage: downloading source video ${id} (test mode)…`);
+    try {
+      await run("yt-dlp", [
+        "-q", "--no-playlist", "--no-warnings",
+        "-f", "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[height<=720]/b",
+        "--merge-output-format", "mp4",
+        "--download-sections", "*0-900",
+        "-o", file,
+        `https://www.youtube.com/watch?v=${id}`,
+      ], { quiet: true });
+    } catch (e) {
+      log(`footage: source download failed (${e instanceof Error ? e.message.split("\n")[0] : e}) — is yt-dlp installed? (brew install yt-dlp)`);
+      return [];
+    }
+  }
+  return existsSync(file) ? [file] : [];
 }
 
 async function hasAudio(file: string): Promise<boolean> {
@@ -162,7 +198,7 @@ export async function renderClip(
   let cursor = LEAD_IN;
   for (const [i, seg] of script.segments.entries()) {
     if (!seg.voiceover.trim()) continue;
-    const v = await speak(seg.voiceover, work, `vo-${i}`, { voice: r.voice, rate: r.voiceRate });
+    const v = await speak(seg.voiceover, work, `vo-${i}`, { voice: clip.script?.voice || r.voice, rate: r.voiceRate });
     beats.push({ start: cursor, end: cursor + v.duration, file: v.file, seg });
     cursor += v.duration + GAP;
   }
@@ -195,7 +231,17 @@ export async function renderClip(
   await writeFile(listFile, list.join("\n"));
 
   // 3. Background: montage of your footage (short cuts), else an animated gradient (always rights-safe)
-  const footage = r.footageMode === "auto" ? await listFootage(clip.game) : [];
+  let footage: string[] = [];
+  let testRender = false;
+  const flag = sourceFlagFor(clip);
+  await mkdir(path.dirname(flag), { recursive: true });
+  await rm(flag, { force: true });
+  if (r.footageMode === "source") {
+    footage = await sourceFootage(clip, log);
+    testRender = footage.length > 0;
+    if (footage.length) await writeFile(flag, `rendered from ${clip.trendUrl} — test only, not for upload\n`);
+    else footage = await listFootage(clip.game);
+  } else if (r.footageMode === "auto") footage = await listFootage(clip.game);
   const bgInput: string[] = [];
   let bgFilter: string;
   let cuts = 0;
@@ -283,6 +329,7 @@ export async function renderClip(
     previewPath,
     durationSec: await probeDuration(fullPath),
     usedFootage: footage,
+    testRender,
     cuts,
     chapters: vertical ? [] : chaptersFrom(beats),
     thumbnailPath,

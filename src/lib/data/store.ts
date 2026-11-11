@@ -72,6 +72,10 @@ export interface Store {
   saveStats(rows: { clipId: string; views: number; likes: number; comments: number; avgViewPct?: number }[]): Promise<void>;
   markCommentPosted(clipId: string): Promise<void>;
   saveChapters(clipId: string, chapters: { t: number; title: string }[]): Promise<void>;
+  /** Remember whether the last render used source-video footage (test mode). */
+  markTestRender(clipId: string, on: boolean): Promise<void>;
+  /** Set this clip's narrator voice (null = Settings default) and queue a fresh render. */
+  setVoiceAndRerender(clipId: string, voice: string | null): Promise<Clip | null>;
   /** Clips stuck in `scripting` (crash/restart) since before `olderThanIso` → back to discovered */
   resetStuckScripting(olderThanIso: string): Promise<number>;
   /** Failed-script clips → discovered so they're retried (max `limit`) */
