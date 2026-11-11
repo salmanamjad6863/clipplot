@@ -27,7 +27,7 @@ export type VideoFormat = "short" | "long";
 export interface ClipScript {
   /** Narrator voice for this clip only (VOICES id); unset = Settings default */
   voice?: string;
-  /** Rendered from the source creator's video (test mode) — never uploaded */
+  /** Background cut from the source creator's video (labelled in the UI) */
   testRender?: boolean;
   angle: string;
   thumbnailText: string;
@@ -127,7 +127,7 @@ export interface FormatSettings {
 /** How the worker builds each video — editable in Settings → Video & copyright */
 export interface RenderSettings {
   /** auto = your footage from worker/footage/<game>/ when present, else gradient; gradient = never use footage;
-   *  source = TEST ONLY: cut up the trend's own YouTube video (local preview; YouTube upload is blocked) */
+   *  source = cut up the trend's own YouTube video (may get Content ID claims) */
   footageMode: "auto" | "gradient" | "source";
   /** Longest continuous piece of any footage file, in seconds (0 = no limit, one continuous piece) */
   maxCutSec: number;

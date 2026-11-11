@@ -2,10 +2,11 @@
  * ClipPilot worker — runs on your Mac. Renders videos and uploads approved ones to YouTube.
  *   pnpm worker          poll for render + upload jobs every 30s
  *   pnpm worker --once   process at most one job, then exit
+ *   pnpm worker --drain  one scheduler tick, then every waiting job, then exit (cloud runs: GitHub Actions)
  *   pnpm worker --tick   run one scheduler tick and show the next discovery/upload times
  *   pnpm worker --local <clip.json>   render a clip JSON file offline (no server, no upload)
  *
- * Needs: ffmpeg + ffprobe (brew install ffmpeg), macOS `say`.
+ * Needs: ffmpeg + ffprobe. Voices: Kokoro (any OS); macOS `say` voices only on a Mac.
  * Full-quality videos stay in worker/output/<clipId>/; only a small preview is uploaded for review.
  */
 import { existsSync } from "node:fs";
@@ -15,7 +16,7 @@ import os from "node:os";
 import { createClient } from "@supabase/supabase-js";
 import { DEFAULT_RENDER, type Clip, type RenderSettings } from "../src/lib/types.ts";
 import { run } from "./proc.mts";
-import { OUTPUT_DIR, fullPathFor, renderClip, sourceFlagFor, thumbPathFor } from "./render.mts";
+import { OUTPUT_DIR, fullPathFor, renderClip, setCloudFootage, sourceFlagFor, thumbPathFor } from "./render.mts";
 import { setThumbnail, uploadToYouTube, type UploadMetadata } from "./youtube.mts";
 
 const API = (process.env.CLIPPILOT_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -76,9 +77,7 @@ async function processOne(type: JobKind): Promise<boolean> {
         log("  full video not on this machine — re-rendering it first");
         file = (await renderClip(clip, (m) => log(`  ${m}`), render)).fullPath;
       }
-      if (existsSync(sourceFlagFor(clip))) {
-        throw new Error("Test render made from the source creator's video — not uploaded. Set Background footage to My footage and Regenerate to publish.");
-      }
+      if (existsSync(sourceFlagFor(clip))) log("  note: background footage is from the source creator's video");
       const plan = await call<{ accessToken: string; channel: string | null; metadata: UploadMetadata }>("upload-plan", { jobId: job.id });
       log(`  uploading to YouTube${plan.channel ? ` (${plan.channel})` : ""} as ${String(plan.metadata.status.privacyStatus)}…`);
       const videoId = await uploadToYouTube(file, plan.metadata, plan.accessToken, (m) => log(`  ${m}`));
@@ -138,9 +137,9 @@ async function processNext(): Promise<boolean> {
 }
 
 async function preflight() {
-  for (const bin of ["ffmpeg", "ffprobe", "say"]) {
+  for (const bin of ["ffmpeg", "ffprobe"]) {
     await run("which", [bin], { quiet: true }).catch(() => {
-      throw new Error(`${bin} not found — install with: brew install ffmpeg`);
+      throw new Error(`${bin} not found — install ffmpeg (Mac: brew install ffmpeg · Linux: apt install ffmpeg)`);
     });
   }
 }
@@ -158,9 +157,28 @@ async function main() {
 
   if (!SECRET) throw new Error("WORKER_SECRET missing (it's in .env.local)");
   log(`ClipPilot worker ${WORKER_ID} → ${API}`);
+  // footage uploaded in Settings → Footage (signed download links, valid 1h)
+  setCloudFootage(async (game) => (await call<{ files: { name: string; url: string; size: number }[] }>("footage", { game })).files);
 
   if (args.includes("--tick")) {
     await tick(true);
+    return;
+  }
+
+  if (args.includes("--drain")) {
+    // cloud run: stop starting new jobs after DRAIN_MINUTES so the runner never hits its time limit
+    const until = Date.now() + Number(process.env.DRAIN_MINUTES || 45) * 60_000;
+    await tick(true).catch((e) => log(`tick error: ${e instanceof Error ? e.message : e}`));
+    let n = 0;
+    while (Date.now() < until) {
+      const did = await processNext().catch((e) => {
+        log(`job error: ${e instanceof Error ? e.message : e}`);
+        return true; // failed job is recorded server-side; try the next one
+      });
+      if (!did) break;
+      n++;
+    }
+    log(n ? `drained ${n} job(s)` : "no render or upload jobs waiting");
     return;
   }
 

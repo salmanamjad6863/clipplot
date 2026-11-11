@@ -1,4 +1,5 @@
 import "server-only";
+import { kickWorker } from "../kick-worker";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { HttpError } from "../api";
 import { presetTopic, type Topic } from "../topics";
@@ -527,6 +528,7 @@ export function createSupabaseStore(url: string, secretKey: string, ws: string):
         if (!existing?.length) {
           const { error: e2 } = await sb.from("jobs").insert({ clip_id: id, type: "render" });
           if (e2) fail("queue render job", e2);
+          await kickWorker("render");
         }
       }
       return data ? toClip(data) : null;
@@ -629,6 +631,7 @@ export function createSupabaseStore(url: string, secretKey: string, ws: string):
       const { error } = await sb.from("jobs").insert({ clip_id: clipId, type });
       // 23505 = unique index jobs_one_active_per_clip: already queued/running → fine
       if (error && error.code !== "23505") fail("queue job", error);
+      if (!error) await kickWorker(type);
     },
 
     async finishJob(jobId, status, message) {
@@ -796,6 +799,7 @@ export function createSupabaseStore(url: string, secretKey: string, ws: string):
       if (!existing?.length) {
         const { error: e3 } = await sb.from("jobs").insert({ clip_id: clipId, type: "render" });
         if (e3) fail("queue render job", e3);
+        await kickWorker("re-render");
       }
       return toClip(row);
     },

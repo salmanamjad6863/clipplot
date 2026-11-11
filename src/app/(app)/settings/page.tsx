@@ -7,6 +7,7 @@ import { Clapperboard, Copy, Film, Radar, Save, Smartphone, Timer, SquarePlay } 
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { TopicsManager } from "@/components/topics-manager";
+import { FootageManager } from "@/components/footage-manager";
 import { PageHeader, Segmented, Toggle, ease, inputCls } from "@/components/ui";
 import { DISCOVERY_LEAD_HOURS } from "@/lib/schedule-time";
 import {
@@ -144,6 +145,11 @@ function SettingsForm({ initial }: { initial: Settings }) {
         {/* Video & copyright */}
         <Card i={4} icon={Film} title="Video & copyright" className="lg:col-span-2">
           <VideoSettings r={s.render} set={setRender} />
+        </Card>
+
+        {/* Footage library (cloud) */}
+        <Card i={5} icon={Clapperboard} title="Footage library" className="lg:col-span-2">
+          <FootageManager topics={s.topics} />
         </Card>
 
         {/* Publishing */}
@@ -295,8 +301,7 @@ function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderS
           </div>
           {r.footageMode === "source" && (
             <p className="mt-1.5 text-[11px] text-amber-300">
-              Test mode: cuts up the trending video itself (needs yt-dlp on your Mac). Preview only — YouTube upload is blocked
-              for these renders.
+              Cuts up the trending video itself (needs yt-dlp on your Mac). Videos made this way may get Content ID claims.
             </p>
           )}
           <p className="mt-1.5 text-[11px] text-muted">

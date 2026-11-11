@@ -27,6 +27,7 @@ export const config = {
     "/api/clips/:path*",
     "/api/trends/:path*",
     "/api/settings/:path*",
+    "/api/footage/:path*",
     "/api/discover/:path*",
     "/api/youtube/:path*",
     "/api/workspaces/:path*",

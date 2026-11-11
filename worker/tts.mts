@@ -43,7 +43,8 @@ export async function speak(
   opts: { voice?: string; rate?: number } = {},
 ): Promise<{ file: string; duration: number }> {
   const wav = path.join(dir, `${name}.wav`);
-  const voice = opts.voice || VOICE;
+  let voice = opts.voice || VOICE;
+  if (process.platform !== "darwin" && !voice.startsWith("kokoro:")) voice = "kokoro:am_michael"; // `say` is Mac-only
   const rate = Number(opts.rate || RATE);
   if (voice.startsWith("kokoro:")) {
     try {

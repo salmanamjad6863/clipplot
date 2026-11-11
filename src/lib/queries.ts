@@ -30,7 +30,7 @@ function hydrationSafe<T extends { data: unknown; isLoading: boolean }>(q: T, hy
   return hydrated ? q : { ...q, data: undefined, isLoading: true };
 }
 
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
+export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },

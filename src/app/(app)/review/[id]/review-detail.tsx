@@ -223,9 +223,10 @@ function PublishStatus({ clip }: { clip: Clip }) {
       <div className="mt-4 flex flex-wrap items-start gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
         <div className="min-w-0 flex-1">
-          <p className="font-medium">Test render — made from the source creator&apos;s video</p>
+          <p className="font-medium">Footage from the source creator&apos;s video</p>
           <p className="mt-0.5 text-xs text-muted">
-            It can&apos;t be uploaded. To publish: Settings → Background footage → My footage, then re-render.
+            May get Content ID claims on YouTube. To use your own footage instead: Settings → Background footage → My footage,
+            then re-render.
           </p>
         </div>
         {["awaiting_approval", "rejected", "failed"].includes(clip.status) && (

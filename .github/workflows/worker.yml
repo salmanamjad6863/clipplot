@@ -1,0 +1,78 @@
+# ClipPilot cloud worker — renders videos and uploads approved ones to YouTube, no Mac needed.
+# Runs when the app queues work (workflow_dispatch from Vercel) and every 15 minutes as the scheduler clock.
+# Free on public repos. Needs repo secrets: CLIPPILOT_URL, WORKER_SECRET, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY.
+name: ClipPilot worker
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+# one worker at a time; extra triggers wait (at most one queued run)
+concurrency:
+  group: clippilot-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      CLIPPILOT_URL: ${{ secrets.CLIPPILOT_URL }}
+      WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+      DRAIN_MINUTES: "45"
+      WORKER_BRAND: ClipPilot
+    steps:
+      - name: Scheduler tick + check for work
+        id: check
+        run: |
+          set -u
+          if [ -z "$CLIPPILOT_URL" ] || [ -z "$WORKER_SECRET" ]; then echo "::error::Set the CLIPPILOT_URL and WORKER_SECRET repo secrets"; exit 1; fi
+          auth=(-H "Authorization: Bearer $WORKER_SECRET" -H "Content-Type: application/json" -d '{}')
+          curl -fsS -X POST "${auth[@]}" "$CLIPPILOT_URL/api/worker/tick" > /dev/null || echo "::warning::tick failed"
+          total=$(curl -fsS -X POST "${auth[@]}" "$CLIPPILOT_URL/api/worker/pending" | jq -r '.total // 0')
+          echo "jobs waiting: $total"
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+
+      - if: steps.check.outputs.total != '0'
+        uses: actions/checkout@v4
+
+      - if: steps.check.outputs.total != '0'
+        uses: pnpm/action-setup@v4
+
+      - if: steps.check.outputs.total != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install ffmpeg, fonts, yt-dlp
+        if: steps.check.outputs.total != '0'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fontconfig > /dev/null
+          mkdir -p ~/.local/share/fonts && cp worker/fonts/*.ttf ~/.local/share/fonts/ && fc-cache -f > /dev/null
+          pipx install yt-dlp > /dev/null || true
+          ffmpeg -version | head -1
+
+      - if: steps.check.outputs.total != '0'
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache voice model + downloads
+        if: steps.check.outputs.total != '0'
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules/.pnpm/@huggingface+transformers@*/node_modules/@huggingface/transformers/.cache
+            worker/cache
+          key: clippilot-cache-${{ github.run_id }}
+          restore-keys: clippilot-cache-
+
+      - name: Render + upload
+        if: steps.check.outputs.total != '0'
+        run: node --no-warnings --import tsx worker/index.mts --drain

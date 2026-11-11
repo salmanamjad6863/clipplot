@@ -60,8 +60,30 @@ In the same Google Cloud project as your YouTube API key:
   [YouTube API audit](https://support.google.com/youtube/contact/yt_api_form) to unlock public uploads.
 - Daily quota is 10,000 units: one upload ≈ 1,600, a discovery run ≈ 101 per game searched.
 
+## 3b. Cloud worker (no Mac needed) — pending
+Renders + uploads run free on GitHub Actions (`.github/workflows/worker.yml`): started by the app whenever a
+video needs rendering/uploading, plus every 15 min as the scheduler clock. Your Mac can stay off.
+1. **Push** this code to GitHub (the workflow file must be on `main`).
+2. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**, add 4 secrets
+   (copy the values from `.env.local`):
+   - `CLIPPILOT_URL` = `https://clipplot.vercel.app`
+   - `WORKER_SECRET` = same as in `.env.local` / Vercel
+   - `SUPABASE_URL` = value of `NEXT_PUBLIC_SUPABASE_URL`
+   - `SUPABASE_PUBLISHABLE_KEY` = value of `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+3. Instant start (optional but recommended): GitHub → profile → **Settings → Developer settings →
+   Fine-grained tokens → Generate new token** → Repository access: only `clipplot` → Permissions:
+   **Actions: Read and write** → Generate. In **Vercel → Project → Settings → Environment Variables** add
+   `GITHUB_DISPATCH_TOKEN` = that token and `GITHUB_REPO` = `salmanamjad6863/clipplot`, then redeploy.
+   (Without it the worker still runs every 15 min.)
+4. Test: GitHub repo → **Actions → ClipPilot worker → Run workflow**. The log shows jobs found / rendered / uploaded.
+5. Footage: **Settings → Footage library** — upload short gameplay / trailer clips per topic (max 50 MB each).
+   The cloud worker uses them as video backgrounds.
+- Note: "Source video (test)" footage mode downloads from YouTube, which often blocks cloud servers — it
+  works best from your Mac.
+- `pnpm worker` on your Mac still works alongside it (they never take the same job).
+
 ## 4. Daily autopilot (how it runs)
-- Keep `pnpm worker` running on your Mac — it renders, uploads, **and is the scheduler clock** (ticks every 5 min).
+- The cloud worker (3b) — or `pnpm worker` on your Mac — renders, uploads, **and is the scheduler clock**.
 - Settings → **Daily upload time (UTC)**. Discovery + Claude scripts run 4h earlier so you can review.
 - Autopilot **off**: approving uploads right away. **On**: approved videos wait for the daily upload time
   (Shorts per day + 1 full video). Settings shows the next/last runs.

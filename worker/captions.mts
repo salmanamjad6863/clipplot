@@ -49,7 +49,7 @@ export async function captionFrame(
       `<rect x="${(c.w - boxW) / 2}" y="${y0 - size - 8}" width="${boxW}" height="${boxH}" rx="22" fill="#ff5e7e" fill-opacity="0.92"/>`,
       ...lines.map(
         (l, i) =>
-          `<text x="50%" y="${y0 + i * size * 1.2}" text-anchor="middle" font-family="Arial Black, Arial" font-weight="900" font-size="${size}" fill="#0b0b12">${esc(l)}</text>`,
+          `<text x="50%" y="${y0 + i * size * 1.2}" text-anchor="middle" font-family="Arial Black, Archivo Black, Arial" font-weight="900" font-size="${size}" fill="#0b0b12">${esc(l)}</text>`,
       ),
     );
   }
@@ -66,14 +66,14 @@ export async function captionFrame(
         const words = l.split(" ").map((w) =>
           hot.has(normWord(w)) ? `<tspan fill="#ffd84d" font-size="${Math.round(size * 1.12)}">${esc(w)}</tspan>` : esc(w),
         );
-        return `<text x="50%" y="${yBase + (i - (lines.length - 1) / 2) * size * 1.14}" text-anchor="middle" font-family="Impact, Arial Black" font-size="${size}" fill="#ffffff" stroke="#000000" stroke-width="${c.vertical ? 14 : 10}" stroke-linejoin="round" paint-order="stroke">${words.join(" ")}</text>`;
+        return `<text x="50%" y="${yBase + (i - (lines.length - 1) / 2) * size * 1.14}" text-anchor="middle" font-family="Impact, Anton, Arial Black, Archivo Black" font-size="${size}" fill="#ffffff" stroke="#000000" stroke-width="${c.vertical ? 14 : 10}" stroke-linejoin="round" paint-order="stroke">${words.join(" ")}</text>`;
       }),
     );
   }
 
   if (opts.brand) {
     parts.push(
-      `<text x="${c.w - 36}" y="${c.h - (c.vertical ? 64 : 36)}" text-anchor="end" font-family="Arial Black, Arial" font-size="${c.vertical ? 34 : 26}" fill="#ffffff" fill-opacity="0.55">${esc(opts.brand)}</text>`,
+      `<text x="${c.w - 36}" y="${c.h - (c.vertical ? 64 : 36)}" text-anchor="end" font-family="Arial Black, Archivo Black, Arial" font-size="${c.vertical ? 34 : 26}" fill="#ffffff" fill-opacity="0.55">${esc(opts.brand)}</text>`,
     );
   }
 

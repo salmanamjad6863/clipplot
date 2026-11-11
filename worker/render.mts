@@ -22,7 +22,7 @@ export interface RenderResult {
   fullPath: string;
   previewPath: string;
   durationSec: number;
-  /** Background was cut from the source creator's video (test mode) — never uploaded */
+  /** Background was cut from the source creator's video */
   testRender: boolean;
   /** Footage files used for the background (empty = gradient) */
   usedFootage: string[];
@@ -66,7 +66,7 @@ async function makeThumbnail(fullPath: string, out: string, text: string, total:
     ${lines
       .map(
         (l, i) =>
-          `<text x="100" y="${360 - (lines.length * size * 1.05) / 2 + (i + 0.82) * size * 1.05 - 30}" font-family="Impact, Arial Black" font-size="${size}" fill="${i === lines.length - 1 ? "#ffd84d" : "#fff"}" stroke="#000" stroke-width="10" paint-order="stroke">${esc(l)}</text>`,
+          `<text x="100" y="${360 - (lines.length * size * 1.05) / 2 + (i + 0.82) * size * 1.05 - 30}" font-family="Impact, Anton, Arial Black, Archivo Black" font-size="${size}" fill="${i === lines.length - 1 ? "#ffd84d" : "#fff"}" stroke="#000" stroke-width="10" paint-order="stroke">${esc(l)}</text>`,
       )
       .join("")}
   </svg>`;
@@ -74,14 +74,59 @@ async function makeThumbnail(fullPath: string, out: string, text: string, total:
   await rm(frame, { force: true });
 }
 
-/** Rights-safe footage YOU provide: worker/footage/<game-slug>/*.mp4 (own gameplay, official trailers). */
-async function listFootage(game: string): Promise<string[]> {
+/**
+ * Footage YOU provide (own gameplay, official trailers): worker/footage/<game-slug>/*.mp4 on this machine,
+ * plus files uploaded in Settings → Footage (cloud storage, downloaded once into worker/cache/footage/).
+ */
+const CLOUD_FOOTAGE_DIR = path.join(ROOT, "cache", "footage");
+export type CloudFootage = (game: string) => Promise<{ name: string; url: string; size: number }[]>;
+let cloudFootage: CloudFootage | null = null;
+export const setCloudFootage = (fn: CloudFootage) => (cloudFootage = fn);
+
+async function listFootage(game: string, log: (m: string) => void = () => {}): Promise<string[]> {
+  const isVideo = (f: string) => /\.(mp4|mov|mkv|webm)$/i.test(f);
+  const files: string[] = [];
   const dir = path.join(FOOTAGE_DIR, game);
-  if (!existsSync(dir)) return [];
-  return (await readdir(dir)).filter((f) => /\.(mp4|mov|mkv|webm)$/i.test(f)).map((f) => path.join(dir, f));
+  if (existsSync(dir)) files.push(...(await readdir(dir)).filter(isVideo).map((f) => path.join(dir, f)));
+  if (cloudFootage) {
+    try {
+      const remote = (await cloudFootage(game)).filter((f) => isVideo(f.name));
+      const cdir = path.join(CLOUD_FOOTAGE_DIR, game);
+      await mkdir(cdir, { recursive: true });
+      for (const f of remote) {
+        const local = path.join(cdir, path.basename(f.name));
+        if (!existsSync(local) || (await stat(local)).size !== f.size) {
+          log(`footage: downloading ${f.name} from Settings → Footage…`);
+          const res = await fetch(f.url);
+          if (!res.ok) throw new Error(`download ${f.name}: ${res.status}`);
+          await writeFile(local, Buffer.from(await res.arrayBuffer()));
+        }
+        files.push(local);
+      }
+    } catch (e) {
+      log(`footage: cloud footage unavailable (${e instanceof Error ? e.message : e})`);
+    }
+  }
+  return files.sort(); // stable order → same cuts on every re-render
 }
 
-/** Marker in a clip's output folder: rendered from the source creator's video → never uploaded. */
+/** Small seeded RNG (mulberry32) so a clip's montage is identical when re-rendered for upload. */
+function seededRandom(seed: string): () => number {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  let a = h >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Marker in a clip's output folder: background came from the source creator's video. */
 export const sourceFlagFor = (clip: Pick<Clip, "id" | "format">) => path.join(path.dirname(fullPathFor(clip)), "SOURCE_FOOTAGE");
 const SOURCE_DIR = path.join(ROOT, "cache", "sources");
 
@@ -134,7 +179,9 @@ async function buildMontage(
   r: RenderSettings,
   work: string,
   log: (m: string) => void,
+  seed: string,
 ): Promise<{ file: string; cuts: number }> {
+  const random = seededRandom(seed);
   const meta = await Promise.all(files.map(async (f) => ({ f, len: await probeDuration(f), audio: await hasAudio(f) })));
   const usable = meta.filter((m) => m.len >= 1);
   if (!usable.length) throw new Error("Footage files are shorter than 1 second");
@@ -147,12 +194,12 @@ async function buildMontage(
   while (covered < total - 0.01) {
     if (pieces.length >= MAX_CUTS) throw new Error(`Montage would need over ${MAX_CUTS} cuts — raise "max seconds per cut"`);
     // random file (avoid repeating the previous one when there's a choice)
-    let idx = Math.floor(Math.random() * usable.length);
+    let idx = Math.floor(random() * usable.length);
     if (usable.length > 1 && idx === last) idx = (idx + 1) % usable.length;
     last = idx;
     const m = usable[idx];
     const len = Math.min(cut, m.len - 0.2, total - covered + 0.05);
-    const offset = Math.random() * Math.max(0, m.len - len - 0.1);
+    const offset = random() * Math.max(0, m.len - len - 0.1);
     const out = path.join(work, `bg-${String(pieces.length).padStart(4, "0")}.mp4`);
     const audioIn = r.keepFootageAudio && !m.audio ? ["-f", "lavfi", "-t", len.toFixed(3), "-i", "anullsrc=r=48000:cl=stereo"] : [];
     const audioOut = r.keepFootageAudio
@@ -239,15 +286,15 @@ export async function renderClip(
   if (r.footageMode === "source") {
     footage = await sourceFootage(clip, log);
     testRender = footage.length > 0;
-    if (footage.length) await writeFile(flag, `rendered from ${clip.trendUrl} — test only, not for upload\n`);
-    else footage = await listFootage(clip.game);
-  } else if (r.footageMode === "auto") footage = await listFootage(clip.game);
+    if (footage.length) await writeFile(flag, `rendered from ${clip.trendUrl} — source footage\n`);
+    else footage = await listFootage(clip.game, log);
+  } else if (r.footageMode === "auto") footage = await listFootage(clip.game, log);
   const bgInput: string[] = [];
   let bgFilter: string;
   let cuts = 0;
   let footageAudio = false;
   if (footage.length) {
-    const m = await buildMontage(footage, total, canvas, r, work, log);
+    const m = await buildMontage(footage, total, canvas, r, work, log, `${clip.id}:${r.maxCutSec}`);
     cuts = m.cuts;
     footageAudio = r.keepFootageAudio;
     bgInput.push("-i", m.file);

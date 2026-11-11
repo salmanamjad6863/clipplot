@@ -46,9 +46,6 @@ export async function PATCH(req: Request, ctx: RouteContext<"/api/clips/[id]">) 
         throw new HttpError(409, `Can't change a clip that is "${current.status}"`);
       }
       if (patch.status === "scheduled" && !current.renderUrl) throw new HttpError(409, "Clip has no rendered video yet");
-      if (patch.status === "scheduled" && current.script?.testRender) {
-        throw new HttpError(409, "This is a test render made from the source video — it can't be uploaded. Set Background footage to My footage and re-render first.");
-      }
     }
 
     const clip = await store.updateClip(id, patch);
