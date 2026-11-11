@@ -1,13 +1,15 @@
 import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { HttpError } from "../api";
-import type { Clip, ClipPatch, ClipScript, Settings, Trend } from "../types";
+import { presetTopic, type Topic } from "../topics";
+import { DEFAULT_RENDER, type Clip, type ClipPatch, type ClipScript, type RenderSettings, type Settings, type Trend } from "../types";
 import type { Job, ScriptWrite, Store } from "./store";
 
 /* ---------- Row shapes (snake_case, as in supabase/migrations/0001_init.sql) ---------- */
 
 interface ClipRow {
   id: string;
+  workspace_id: string;
   game_slug: string;
   is_fallback: boolean;
   format: Clip["format"];
@@ -22,7 +24,15 @@ interface ClipRow {
   source_url: string | null;
   render_url: string | null;
   youtube_url: string | null;
+  youtube_video_id: string | null;
   playlist_id: string | null;
+  views?: number | null;
+  likes?: number | null;
+  comments?: number | null;
+  avg_view_pct?: number | null;
+  stats_at?: string | null;
+  comment_posted?: boolean | null;
+  privacy?: string | null;
   viral_score: number;
   risk_score: number;
   script: string | null;
@@ -61,15 +71,51 @@ interface SettingsRow {
   youtube_channel_id: string | null;
   youtube_channel_title?: string | null; // added in 0002
   youtube_privacy?: Settings["youtubePrivacy"]; // added in 0002
+  render?: Partial<RenderSettings>; // added in 0002
+  upload_times?: string[] | null; // 0004
+  breaking_news?: boolean; // 0004
+  breaking_every_hours?: number; // 0004
+  last_breaking_at?: string | null; // 0004
+  last_stats_at?: string | null; // 0004
+  youtube_scopes?: string | null; // 0004
+  topic_mode?: string; // 0004
+  channel_persona?: string; // 0004
   last_discovery_at?: string | null; // added in 0002
   last_release_at?: string | null; // added in 0002
 }
 
 interface GameRow {
   slug: string;
+  name: string;
   enabled: boolean;
   priority: number;
+  queries: string[];
+  hashtags: string[];
+  playlist_title: string;
+  keywords?: string[] | null; // 0004
+  color?: string | null; // 0004
+  daily_shorts?: number; // 0004
+  notes?: string; // 0004
+  custom?: boolean; // 0004
 }
+
+const toTopic = (g: GameRow): Topic => {
+  const preset = presetTopic(g.slug, g.priority);
+  return {
+    slug: g.slug,
+    name: g.name,
+    enabled: g.enabled,
+    priority: g.priority,
+    queries: g.queries?.length ? g.queries : (preset?.queries ?? [g.name]),
+    keywords: g.keywords ?? [],
+    hashtags: g.hashtags ?? [],
+    playlistTitle: g.playlist_title,
+    color: g.color ?? preset?.color ?? "#8b5cf6",
+    dailyShorts: g.daily_shorts ?? 1,
+    notes: g.notes ?? "",
+    custom: g.custom ?? false,
+  };
+};
 
 /* ---------- Mapping ---------- */
 
@@ -77,6 +123,7 @@ const u = <T>(v: T | null) => v ?? undefined;
 
 const toClip = (r: ClipRow): Clip => ({
   id: r.id,
+  workspaceId: r.workspace_id,
   game: r.game_slug,
   isFallback: r.is_fallback,
   format: r.format,
@@ -91,7 +138,15 @@ const toClip = (r: ClipRow): Clip => ({
   sourceUrl: u(r.source_url),
   renderUrl: u(r.render_url),
   youtubeUrl: u(r.youtube_url),
+  youtubeVideoId: u(r.youtube_video_id),
   playlistId: u(r.playlist_id),
+  views: r.views == null ? undefined : Number(r.views),
+  likes: r.likes ?? undefined,
+  comments: r.comments ?? undefined,
+  avgViewPct: r.avg_view_pct ?? undefined,
+  statsAt: r.stats_at ?? undefined,
+  commentPosted: r.comment_posted ?? false,
+  privacy: (r.privacy as Clip["privacy"]) ?? undefined,
   viralScore: r.viral_score,
   riskScore: r.risk_score,
   script: parseScript(r.script),
@@ -132,6 +187,7 @@ const clipPatchToRow = (p: ClipPatch) => ({
   ...(p.description !== undefined && { description: p.description }),
   ...(p.tags !== undefined && { tags: p.tags }),
   ...(p.scheduledFor !== undefined && { scheduled_for: p.scheduledFor }),
+  ...(p.privacy !== undefined && { privacy: p.privacy }),
 });
 
 interface JobRow {
@@ -153,7 +209,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function fail(what: string, error: { message: string; code?: string }): never {
   if (error.code === "PGRST204" || error.code === "42703") {
-    throw new HttpError(503, "Database needs an update — run supabase/migrations/0002_publishing.sql in the Supabase SQL Editor");
+    throw new HttpError(503, "Database needs an update — run the newest files in supabase/migrations/ (0002–0004) in the Supabase SQL Editor");
   }
   if (error.code === "PGRST205" || error.code === "42P01") {
     throw new HttpError(503, "Database not set up — run supabase/migrations/0001_init.sql in the Supabase SQL Editor");
@@ -161,22 +217,44 @@ function fail(what: string, error: { message: string; code?: string }): never {
   throw new Error(`Supabase ${what}: ${error.message}`);
 }
 
-export function createSupabaseStore(url: string, secretKey: string): Store {
-  const sb: SupabaseClient = createClient(url, secretKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
+const clients = new Map<string, SupabaseClient>();
+export function supabaseAdmin(url: string, secretKey: string): SupabaseClient {
+  let c = clients.get(url);
+  if (!c) {
+    c = createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    clients.set(url, c);
+  }
+  return c;
+}
+
+/**
+ * Store scoped to one workspace (= one YouTube channel). Every settings/games/trends/clips query is
+ * filtered by `ws` and every insert is tagged with it. Job claiming is global (one worker serves all).
+ */
+export function createSupabaseStore(url: string, secretKey: string, ws: string): Store {
+  const sb = supabaseAdmin(url, secretKey);
+  // every clips/trends read/update/delete goes through these, so the workspace filter can't be forgotten
+  const scope = (table: "clips" | "trends") => ({
+    select: (cols: string, opts?: { count?: "exact" }) => sb.from(table).select(cols, opts).eq("workspace_id", ws),
+    update: (row: Record<string, unknown>) => sb.from(table).update(row).eq("workspace_id", ws),
+    delete: () => sb.from(table).delete().eq("workspace_id", ws),
   });
+  const scoped = { clips: scope("clips"), trends: scope("trends") };
 
   async function getSettings(): Promise<Settings> {
     const [s, g] = await Promise.all([
-      sb.from("settings").select("*").eq("id", 1).single<SettingsRow>(),
-      sb.from("games").select("slug, enabled, priority").order("priority").returns<GameRow[]>(),
+      sb.from("settings").select("*").eq("workspace_id", ws).single<SettingsRow>(),
+      sb.from("games").select("*").eq("workspace_id", ws).order("priority").returns<GameRow[]>(),
     ]);
     if (s.error) fail("settings", s.error);
     if (g.error) fail("games", g.error);
     const r = s.data;
     return {
       autopilot: r.autopilot,
-      uploadTime: r.upload_time,
+      uploadTime: (r.upload_times?.length ? [...r.upload_times].sort()[0] : r.upload_time),
+      uploadTimes: r.upload_times?.length ? [...r.upload_times].sort() : [r.upload_time],
+      breakingNews: r.breaking_news ?? false,
+      breakingEveryHours: r.breaking_every_hours ?? 3,
       minViewsPerHour: r.min_views_per_hour,
       maxFallbackDepth: r.max_fallback_depth,
       lookbackHours: r.lookback_hours,
@@ -184,9 +262,19 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
       titleSimilarity: r.title_similarity,
       formats: r.formats,
       games: g.data.map((x) => ({ slug: x.slug, enabled: x.enabled })),
+      topics: g.data.map(toTopic),
+      topicMode: r.topic_mode === "per_topic" ? "per_topic" : "fallback",
+      channelPersona: r.channel_persona ?? "",
+      render: { ...DEFAULT_RENDER, ...(r.render ?? {}) },
       youtubeConnected: Boolean(r.youtube_refresh_token),
       youtubeChannelTitle: r.youtube_channel_title ?? undefined,
       youtubePrivacy: r.youtube_privacy ?? "private",
+      youtubeScopes: r.youtube_refresh_token
+        ? {
+            analytics: Boolean(r.youtube_scopes?.includes("yt-analytics.readonly")),
+            comments: Boolean(r.youtube_scopes?.includes("youtube.force-ssl")),
+          }
+        : undefined,
     };
   }
 
@@ -194,14 +282,14 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     kind: "supabase",
 
     async listClips() {
-      const { data, error } = await sb.from("clips").select("*").order("created_at", { ascending: false }).limit(500).returns<ClipRow[]>();
+      const { data, error } = await scoped.clips.select("*").order("created_at", { ascending: false }).limit(500).returns<ClipRow[]>();
       if (error) fail("clips", error);
       return data.map(toClip);
     },
 
     async getClip(id) {
       if (!UUID_RE.test(id)) return null;
-      const { data, error } = await sb.from("clips").select("*").eq("id", id).maybeSingle<ClipRow>();
+      const { data, error } = await scoped.clips.select("*").eq("id", id).maybeSingle<ClipRow>();
       if (error) fail("clip", error);
       return data ? toClip(data) : null;
     },
@@ -210,15 +298,13 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
       if (!UUID_RE.test(id)) return null;
       const row: Record<string, unknown> = clipPatchToRow(patch);
       if (patch.status === "published") row.published_at = new Date().toISOString();
-      const { data, error } = await sb.from("clips").update(row).eq("id", id).select("*").maybeSingle<ClipRow>();
+      const { data, error } = await scoped.clips.update(row).eq("id", id).select("*").maybeSingle<ClipRow>();
       if (error) fail("update clip", error);
       return data ? toClip(data) : null;
     },
 
     async listTrends() {
-      const { data, error } = await sb
-        .from("trends")
-        .select("*")
+      const { data, error } = await scoped.trends.select("*")
         .order("found_at", { ascending: false })
         .order("views_per_hour", { ascending: false })
         .limit(200)
@@ -233,15 +319,13 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
 
     async findExistingVideoIds(videoIds) {
       if (videoIds.length === 0) return new Set();
-      const { data, error } = await sb.from("trends").select("youtube_video_id").in("youtube_video_id", videoIds);
+      const { data, error } = await scoped.trends.select("youtube_video_id").in("youtube_video_id", videoIds);
       if (error) fail("find trends", error);
-      return new Set((data as { youtube_video_id: string }[]).map((r) => r.youtube_video_id));
+      return new Set((data as unknown as { youtube_video_id: string }[]).map((r) => r.youtube_video_id));
     },
 
     async recentlyUsed(sinceIso) {
-      const { data, error } = await sb
-        .from("trends")
-        .select("youtube_video_id, title, found_at")
+      const { data, error } = await scoped.trends.select("youtube_video_id, title, found_at")
         .eq("status", "used")
         .gte("found_at", sinceIso)
         .returns<{ youtube_video_id: string; title: string; found_at: string }[]>();
@@ -250,9 +334,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     },
 
     async recentTrends(sinceIso) {
-      const { data, error } = await sb
-        .from("trends")
-        .select("*")
+      const { data, error } = await scoped.trends.select("*")
         .in("status", ["new", "used"])
         .gte("found_at", sinceIso)
         .returns<TrendRow[]>();
@@ -261,9 +343,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     },
 
     async lastLongClipAt() {
-      const { data, error } = await sb
-        .from("clips")
-        .select("created_at")
+      const { data, error } = await scoped.clips.select("created_at")
         .eq("format", "long")
         .order("created_at", { ascending: false })
         .limit(1)
@@ -273,14 +353,24 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     },
 
     async countShortsSince(sinceIso) {
-      const { count, error } = await sb
-        .from("clips")
-        .select("id", { count: "exact" })
+      const { count, error } = await scoped.clips.select("id", { count: "exact" })
         .eq("format", "short")
         .gte("created_at", sinceIso)
         .limit(1);
       if (error) fail("count shorts", error);
       return count ?? 0;
+    },
+
+    async countShortsByGameSince(sinceIso) {
+      const { data, error } = await scoped.clips
+        .select("game_slug")
+        .eq("format", "short")
+        .gte("created_at", sinceIso)
+        .returns<{ game_slug: string }[]>();
+      if (error) fail("count shorts by game", error);
+      const out: Record<string, number> = {};
+      for (const r of data) out[r.game_slug] = (out[r.game_slug] ?? 0) + 1;
+      return out;
     },
 
     async saveDiscovery(plan) {
@@ -290,6 +380,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
           .from("trends")
           .upsert(
             plan.trends.map((t) => ({
+              workspace_id: ws,
               game_slug: t.game,
               youtube_video_id: t.videoId,
               url: t.url,
@@ -303,7 +394,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
               duplicate_reason: t.duplicateReason ?? null,
             })),
             // UNIQUE(youtube_video_id): a concurrent run can never insert the same video twice
-            { onConflict: "youtube_video_id", ignoreDuplicates: true },
+            { onConflict: "workspace_id,youtube_video_id", ignoreDuplicates: true },
           )
           .select("id, youtube_video_id");
         if (error) fail("insert trends", error);
@@ -317,6 +408,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
           // a Short whose trend was taken by a concurrent run is dropped
           if (c.format === "short" && ids.length === 0) return null;
           return {
+            workspace_id: ws,
             game_slug: c.game,
             is_fallback: c.isFallback,
             format: c.format,
@@ -335,11 +427,34 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
         if (error) fail("insert clips", error);
         const reused = plan.clips.flatMap((c) => c.existingTrendIds);
         if (reused.length) {
-          const { error: e2 } = await sb.from("trends").update({ status: "used" }).in("id", reused);
+          const { error: e2 } = await scoped.trends.update({ status: "used" }).in("id", reused);
           if (e2) fail("mark trends used", e2);
         }
       }
       return { trends: trendRows.length, clips: clipRows.length };
+    },
+
+    async createClip(c) {
+      const { data, error } = await sb
+        .from("clips")
+        .insert({
+          workspace_id: ws,
+          game_slug: c.game,
+          is_fallback: c.isFallback ?? false,
+          format: c.format,
+          duration_sec: c.durationSec,
+          title: c.title.slice(0, 100),
+          status: "discovered",
+          trend_ids: c.trendIds,
+          trend_url: c.trendUrl,
+          viral_score: c.viralScore,
+        })
+        .select("*")
+        .single<ClipRow>();
+      if (error) fail("create clip", error);
+      const { error: e2 } = await scoped.trends.update({ status: "used" }).in("id", c.trendIds);
+      if (e2) fail("mark trends used", e2);
+      return toClip(data);
     },
 
     /* ---------- scripting ---------- */
@@ -347,16 +462,14 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     async getTrendsByIds(ids) {
       const valid = ids.filter((i) => UUID_RE.test(i));
       if (valid.length === 0) return [];
-      const { data, error } = await sb.from("trends").select("*").in("id", valid).returns<TrendRow[]>();
+      const { data, error } = await scoped.trends.select("*").in("id", valid).returns<TrendRow[]>();
       if (error) fail("trends by id", error);
       const byId = new Map(data.map((r) => [r.id, toTrend(r)]));
       return valid.map((i) => byId.get(i)).filter((t): t is Trend => !!t); // keep the clip's order
     },
 
     async claimForScripting(limit) {
-      const { data: ids, error } = await sb
-        .from("clips")
-        .select("id")
+      const { data: ids, error } = await scoped.clips.select("id")
         .eq("status", "discovered")
         .order("created_at")
         .limit(limit)
@@ -364,9 +477,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
       if (error) fail("find clips to script", error);
       if (ids.length === 0) return [];
       // the status guard makes this a compare-and-set: two runners can't claim the same clip
-      const { data, error: e2 } = await sb
-        .from("clips")
-        .update({ status: "scripting", error: null })
+      const { data, error: e2 } = await scoped.clips.update({ status: "scripting", error: null })
         .in("id", ids.map((r) => r.id))
         .eq("status", "discovered")
         .select("*")
@@ -377,9 +488,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
 
     async claimOneForScripting(id) {
       if (!UUID_RE.test(id)) return null;
-      const { data, error } = await sb
-        .from("clips")
-        .update({ status: "scripting", error: null })
+      const { data, error } = await scoped.clips.update({ status: "scripting", error: null })
         .eq("id", id)
         .in("status", ["discovered", "failed", "rendering", "awaiting_approval", "rejected"])
         .select("*")
@@ -389,9 +498,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     },
 
     async saveScript(id, w: ScriptWrite) {
-      const { data, error } = await sb
-        .from("clips")
-        .update({
+      const { data, error } = await scoped.clips.update({
           hook: w.hook,
           title: w.title,
           description: w.description,
@@ -417,7 +524,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     },
 
     async failScript(id, message) {
-      const { error } = await sb.from("clips").update({ status: "failed", error: message.slice(0, 500) }).eq("id", id);
+      const { error } = await scoped.clips.update({ status: "failed", error: message.slice(0, 500) }).eq("id", id);
       if (error) fail("mark clip failed", error);
     },
 
@@ -447,6 +554,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
           .maybeSingle<JobRow>();
         if (e2) fail("claim job", e2);
         if (!job) continue;
+        // jobs are global (one worker, all workspaces) → unscoped clip lookup
         const { data: clip, error: e3 } = await sb.from("clips").select("*").eq("id", job.clip_id).maybeSingle<ClipRow>();
         if (e3) fail("job clip", e3);
         if (!clip) {
@@ -481,9 +589,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     async completeRender(jobId, r) {
       // cache-bust so a re-render shows the new preview
       const previewUrl = `${r.previewUrl}?v=${Date.now()}`;
-      const { data, error } = await sb
-        .from("clips")
-        .update({ status: "awaiting_approval", render_url: previewUrl, duration_sec: Math.round(r.durationSec), error: null })
+      const { data, error } = await scoped.clips.update({ status: "awaiting_approval", render_url: previewUrl, duration_sec: Math.round(r.durationSec), error: null })
         .eq("id", r.clipId)
         .select("*")
         .maybeSingle<ClipRow>();
@@ -538,8 +644,8 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     async getYouTubeCredentials() {
       const { data, error } = await sb
         .from("settings")
-        .select("*")
-        .eq("id", 1)
+        .select("*").eq("workspace_id", ws)
+        
         .single<SettingsRow>();
       if (error) fail("youtube credentials", error);
       return {
@@ -552,39 +658,42 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     async saveYouTubeConnection(c) {
       const { error } = await sb
         .from("settings")
-        .update({ youtube_refresh_token: c.refreshTokenEnc, youtube_channel_id: c.channelId, youtube_channel_title: c.channelTitle })
-        .eq("id", 1);
+        .update({
+          youtube_refresh_token: c.refreshTokenEnc,
+          youtube_channel_id: c.channelId,
+          youtube_channel_title: c.channelTitle,
+          youtube_scopes: c.scopes,
+        }).eq("workspace_id", ws)
+        ;
       if (error) fail("save youtube", error);
     },
 
     async clearYouTubeConnection() {
       const { error } = await sb
         .from("settings")
-        .update({ youtube_refresh_token: null, youtube_channel_id: null, youtube_channel_title: null })
-        .eq("id", 1);
+        .update({ youtube_refresh_token: null, youtube_channel_id: null, youtube_channel_title: null, youtube_scopes: null }).eq("workspace_id", ws)
+        ;
       if (error) fail("clear youtube", error);
       // playlists belong to the old channel
-      const { error: e2 } = await sb.from("games").update({ short_playlist_id: null, long_playlist_id: null }).neq("slug", "");
+      const { error: e2 } = await sb.from("games").update({ short_playlist_id: null, long_playlist_id: null }).eq("workspace_id", ws);
       if (e2) fail("clear playlists", e2);
     },
 
     async getPlaylistId(game, format) {
       const col = format === "short" ? "short_playlist_id" : "long_playlist_id";
-      const { data, error } = await sb.from("games").select(col).eq("slug", game).maybeSingle<Record<string, string | null>>();
+      const { data, error } = await sb.from("games").select(col).eq("workspace_id", ws).eq("slug", game).maybeSingle<Record<string, string | null>>();
       if (error) fail("playlist id", error);
       return data?.[col] ?? null;
     },
 
     async setPlaylistId(game, format, playlistId) {
       const col = format === "short" ? "short_playlist_id" : "long_playlist_id";
-      const { error } = await sb.from("games").update({ [col]: playlistId }).eq("slug", game);
+      const { error } = await sb.from("games").update({ [col]: playlistId }).eq("workspace_id", ws).eq("slug", game);
       if (error) fail("set playlist", error);
     },
 
     async markPublished(jobId, clipId, r) {
-      const { data, error } = await sb
-        .from("clips")
-        .update({
+      const { data, error } = await scoped.clips.update({
           status: "published",
           youtube_video_id: r.youtubeVideoId,
           youtube_url: r.youtubeUrl,
@@ -601,24 +710,82 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     },
 
     async setClipPlaylist(clipId, playlistId) {
-      const { error } = await sb.from("clips").update({ playlist_id: playlistId }).eq("id", clipId);
+      const { error } = await scoped.clips.update({ playlist_id: playlistId }).eq("id", clipId);
       if (error) fail("set clip playlist", error);
+    },
+
+    /* ---------- growth ---------- */
+
+    async publishedForStats(sinceIso, limit) {
+      const { data, error } = await scoped.clips
+        .select("*")
+        .eq("status", "published")
+        .not("youtube_video_id", "is", null)
+        .gte("published_at", sinceIso)
+        .order("published_at", { ascending: false })
+        .limit(limit)
+        .returns<ClipRow[]>();
+      if (error) fail("published clips", error);
+      return data.map(toClip);
+    },
+
+    async saveStats(rows) {
+      const at = new Date().toISOString();
+      const results = await Promise.all(
+        rows.map((r) =>
+          scoped.clips
+            .update({
+              views: r.views,
+              likes: r.likes,
+              comments: r.comments,
+              ...(r.avgViewPct !== undefined && { avg_view_pct: r.avgViewPct }),
+              stats_at: at,
+            })
+            .eq("id", r.clipId),
+        ),
+      );
+      const bad = results.find((x) => x.error);
+      if (bad?.error) fail("save stats", bad.error);
+    },
+
+    async markCommentPosted(clipId) {
+      const { error } = await scoped.clips.update({ comment_posted: true }).eq("id", clipId);
+      if (error) fail("comment posted", error);
+    },
+
+    async saveChapters(clipId, chapters) {
+      const { data, error } = await scoped.clips.select("script").eq("id", clipId).maybeSingle<{ script: string | null }>();
+      if (error) fail("read script", error);
+      const script = parseScript(data?.script ?? null);
+      if (!script) return;
+      const { error: e2 } = await scoped.clips.update({ script: JSON.stringify({ ...script, chapters }) }).eq("id", clipId);
+      if (e2) fail("save chapters", e2);
     },
 
     /* ---------- scheduler ---------- */
 
     async getSchedulerState() {
-      const { data, error } = await sb.from("settings").select("last_discovery_at, last_release_at").eq("id", 1).single<SettingsRow>();
+      const { data, error } = await sb.from("settings").select("*").eq("workspace_id", ws).single<SettingsRow>();
       if (error) fail("scheduler state", error);
-      return { lastDiscoveryAt: data.last_discovery_at ?? null, lastReleaseAt: data.last_release_at ?? null };
+      return {
+        lastDiscoveryAt: data.last_discovery_at ?? null,
+        lastReleaseAt: data.last_release_at ?? null,
+        lastBreakingAt: data.last_breaking_at ?? null,
+        lastStatsAt: data.last_stats_at ?? null,
+      };
     },
 
     async claimSchedulerRun(kind, slotIso) {
-      const col = kind === "discovery" ? "last_discovery_at" : "last_release_at";
+      const col = {
+        discovery: "last_discovery_at",
+        release: "last_release_at",
+        breaking: "last_breaking_at",
+        stats: "last_stats_at",
+      }[kind];
       const { data, error } = await sb
         .from("settings")
-        .update({ [col]: new Date().toISOString() })
-        .eq("id", 1)
+        .update({ [col]: new Date().toISOString() }).eq("workspace_id", ws)
+        
         .or(`${col}.is.null,${col}.lt.${slotIso}`)
         .select("id");
       if (error) fail("claim scheduler run", error);
@@ -626,9 +793,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     },
 
     async resetStuckScripting(olderThanIso) {
-      const { data, error } = await sb
-        .from("clips")
-        .update({ status: "discovered" })
+      const { data, error } = await scoped.clips.update({ status: "discovered" })
         .eq("status", "scripting")
         .lt("updated_at", olderThanIso)
         .select("id");
@@ -637,9 +802,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     },
 
     async retryFailedScripts(limit) {
-      const { data: ids, error } = await sb
-        .from("clips")
-        .select("id")
+      const { data: ids, error } = await scoped.clips.select("id")
         .eq("status", "failed")
         .like("error", "Script:%")
         .order("updated_at")
@@ -647,9 +810,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
         .returns<{ id: string }[]>();
       if (error) fail("find failed scripts", error);
       if (!ids.length) return 0;
-      const { data, error: e2 } = await sb
-        .from("clips")
-        .update({ status: "discovered", error: null })
+      const { data, error: e2 } = await scoped.clips.update({ status: "discovered", error: null })
         .in("id", ids.map((r) => r.id))
         .eq("status", "failed")
         .select("id");
@@ -658,9 +819,7 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
     },
 
     async previewsToCleanup(olderThanIso) {
-      const { data, error } = await sb
-        .from("clips")
-        .select("id")
+      const { data, error } = await scoped.clips.select("id")
         .eq("status", "published")
         .not("render_url", "is", null)
         .lt("published_at", olderThanIso)
@@ -670,36 +829,88 @@ export function createSupabaseStore(url: string, secretKey: string): Store {
       return data.map((r) => r.id);
     },
 
+    async purgeStaleYouTubeData(olderThanIso) {
+      const t = await scoped.trends.delete().lt("found_at", olderThanIso).select("id");
+      if (t.error) fail("purge trends", t.error);
+      const st = await scoped.clips
+        .update({ views: null, likes: null, comments: null, avg_view_pct: null, stats_at: null })
+        .lt("stats_at", olderThanIso)
+        .select("id");
+      // stats columns arrive with migration 0004 — before that there's nothing to purge
+      if (st.error && st.error.code !== "PGRST204" && st.error.code !== "42703") fail("purge stats", st.error);
+      return { trends: t.data?.length ?? 0, stats: st.data?.length ?? 0 };
+    },
+
     async clearPreview(clipId) {
       await sb.storage.from(RENDER_BUCKET).remove([`${clipId}/preview.mp4`, `${clipId}/preview.jpg`]);
-      const { error } = await sb.from("clips").update({ render_url: null }).eq("id", clipId);
+      const { error } = await scoped.clips.update({ render_url: null }).eq("id", clipId);
       if (error) fail("clear preview", error);
     },
 
     async updateSettings(next) {
       const row: Record<string, unknown> = {};
       if (next.autopilot !== undefined) row.autopilot = next.autopilot;
-      if (next.uploadTime !== undefined) row.upload_time = next.uploadTime;
+      if (next.uploadTimes !== undefined) {
+        const times = [...new Set(next.uploadTimes)].sort();
+        row.upload_times = times;
+        row.upload_time = times[0];
+      } else if (next.uploadTime !== undefined) {
+        row.upload_time = next.uploadTime;
+        row.upload_times = [next.uploadTime];
+      }
+      if (next.breakingNews !== undefined) row.breaking_news = next.breakingNews;
+      if (next.breakingEveryHours !== undefined) row.breaking_every_hours = next.breakingEveryHours;
+      if (next.topicMode !== undefined) row.topic_mode = next.topicMode;
+      if (next.channelPersona !== undefined) row.channel_persona = next.channelPersona;
       if (next.minViewsPerHour !== undefined) row.min_views_per_hour = next.minViewsPerHour;
       if (next.maxFallbackDepth !== undefined) row.max_fallback_depth = next.maxFallbackDepth;
       if (next.lookbackHours !== undefined) row.lookback_hours = next.lookbackHours;
       if (next.dedupeWindowDays !== undefined) row.dedupe_window_days = next.dedupeWindowDays;
       if (next.titleSimilarity !== undefined) row.title_similarity = next.titleSimilarity;
       if (next.youtubePrivacy !== undefined) row.youtube_privacy = next.youtubePrivacy;
-      if (next.formats) {
+      if (next.formats || next.render) {
         const current = await getSettings();
-        row.formats = { ...current.formats, ...next.formats };
+        if (next.formats) row.formats = { ...current.formats, ...next.formats };
+        if (next.render) row.render = { ...current.render, ...next.render };
       }
 
       if (Object.keys(row).length) {
-        const { error } = await sb.from("settings").update(row).eq("id", 1);
+        const { error } = await sb.from("settings").update(row).eq("workspace_id", ws);
         if (error) fail("update settings", error);
       }
 
-      if (next.games) {
+      if (next.topics) {
+        // full edit: position = priority; add new topics; remove deleted custom ones (presets can only be disabled)
+        const keep = new Set(next.topics.map((t) => t.slug));
+        const up = await sb.from("games").upsert(
+          next.topics.map((t, priority) => ({
+            workspace_id: ws,
+            slug: t.slug,
+            name: t.name,
+            priority,
+            enabled: t.enabled,
+            queries: t.queries,
+            keywords: t.keywords,
+            hashtags: t.hashtags.slice(0, 3),
+            playlist_title: t.playlistTitle,
+            color: t.color,
+            daily_shorts: t.dailyShorts,
+            notes: t.notes,
+            custom: t.custom,
+          })),
+          { onConflict: "workspace_id,slug" },
+        );
+        if (up.error) fail("save topics", up.error);
+        const { data: existing } = await sb.from("games").select("slug, custom").eq("workspace_id", ws);
+        const gone = (existing ?? []).filter((r: { slug: string; custom: boolean }) => r.custom && !keep.has(r.slug)).map((r) => r.slug);
+        if (gone.length) {
+          const del = await sb.from("games").delete().eq("workspace_id", ws).in("slug", gone);
+          if (del.error) fail("delete topics", del.error);
+        }
+      } else if (next.games) {
         // priority = position in the list → fallback order
         const results = await Promise.all(
-          next.games.map((g, priority) => sb.from("games").update({ priority, enabled: g.enabled }).eq("slug", g.slug)),
+          next.games.map((g, priority) => sb.from("games").update({ priority, enabled: g.enabled }).eq("workspace_id", ws).eq("slug", g.slug)),
         );
         const bad = results.find((r) => r.error);
         if (bad?.error) fail("update games", bad.error);

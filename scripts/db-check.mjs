@@ -31,6 +31,19 @@ if (ok) {
   const { error } = await sb.from("settings").select("youtube_privacy, youtube_channel_title, last_discovery_at, last_release_at").limit(1);
   console.log(error ? "✗ migration 0002 not applied — run supabase/migrations/0002_publishing.sql" : "✓ migration 0002 (publishing + scheduler) applied");
   if (error) ok = false;
+  const w = await sb.from("workspaces").select("id, name");
+  const c = await sb.from("clips").select("workspace_id").limit(1);
+  if (w.error || c.error) {
+    console.log("✗ migration 0003 not applied — run supabase/migrations/0003_workspaces.sql");
+    ok = false;
+  } else {
+    console.log(`✓ migration 0003 (workspaces): ${w.data.map((x) => x.name).join(", ")}`);
+  }
+  const g4a = await sb.from("settings").select("upload_times, breaking_news, last_stats_at, topic_mode").limit(1);
+  const g4b = await sb.from("games").select("keywords, daily_shorts, notes, custom").limit(1);
+  const g4 = { error: g4a.error || g4b.error };
+  console.log(g4.error ? "✗ migration 0004 not applied — run supabase/migrations/0004_growth.sql" : "✓ migration 0004 (growth + topics: stats, slots, breaking news, editable topics)");
+  if (g4.error) ok = false;
   const { data: buckets } = await sb.storage.listBuckets();
   const hasBucket = buckets?.some((b) => b.name === "renders");
   console.log(hasBucket ? '✓ storage bucket "renders"' : '✗ storage bucket "renders" missing — run pnpm db:seed');

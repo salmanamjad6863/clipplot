@@ -1,4 +1,5 @@
 import { handle } from "@/lib/api";
+import { currentWorkspaceId } from "@/lib/workspaces";
 import { decrypt } from "@/lib/crypto";
 import { getStore } from "@/lib/data";
 import { forgetAccessToken } from "@/lib/youtube/channel";
@@ -7,7 +8,8 @@ import { revokeToken } from "@/lib/youtube/oauth";
 /** Revokes Google access and forgets the channel. Already-published videos stay on YouTube. */
 export async function POST() {
   return handle("youtube disconnect", async () => {
-    const store = getStore();
+    const ws = await currentWorkspaceId();
+    const store = getStore(ws);
     const { refreshTokenEnc } = await store.getYouTubeCredentials();
     if (refreshTokenEnc) {
       try {
@@ -17,7 +19,7 @@ export async function POST() {
       }
     }
     await store.clearYouTubeConnection();
-    forgetAccessToken();
+    forgetAccessToken(ws);
     return { ok: true };
   });
 }

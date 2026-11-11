@@ -33,6 +33,7 @@ const v = (id: string, title: string, views: number, h: number): VideoMeta => ({
   views,
   durationSec: 50,
   isLive: false,
+  channelSubscribers: 0,
 });
 
 const base = (over: Partial<PlanInput> = {}): PlanInput => ({
@@ -178,5 +179,31 @@ const base = (over: Partial<PlanInput> = {}): PlanInput => ({
 assert.equal(parseDuration("PT1M2S"), 62);
 assert.equal(parseDuration("PT1H"), 3600);
 assert.equal(viralScore(5000), 74);
+
+// 9. Breakout beats raw speed: small channel at 20× its size outranks a giant channel slightly faster
+{
+  const plan = await planDiscovery(
+    base({
+      fetchVideos: async (g) =>
+        g.slug === "gta-6"
+          ? [
+              { ...v("h1", "GTA 6 trailer reaction", 60_000 * 10, 10), channelSubscribers: 20_000_000 },
+              { ...v("h2", "GTA 6 hidden easter egg found", 45_000 * 10, 10), channelSubscribers: 20_000 },
+            ]
+          : [],
+    }),
+  );
+  assert.ok(plan.clips[0].newTrendVideoIds[0].startsWith("h2"), "breakout video picked first");
+  assert.ok(plan.clips[0].viralScore > viralScore(45_000), "breakout raises the viral score");
+}
+
+// 10. "Find more now": daily quota used, extraShorts still makes one
+{
+  const plan = await planDiscovery(
+    base({ shortsCreatedToday: 1, extraShorts: 1, fetchVideos: async () => [v("i1", "GTA 6 big news", 300_000, 5)] }),
+  );
+  assert.equal(plan.clips.filter((c) => c.format === "short").length, 1);
+  assert.ok(plan.clips[0].durationSec <= 40, "Shorts target ≤ 40s");
+}
 
 console.log("discovery: all checks passed");

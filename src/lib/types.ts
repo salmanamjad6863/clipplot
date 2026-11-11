@@ -1,3 +1,16 @@
+import type { Topic, TopicMode } from "./topics";
+
+/** The workspace everything lived in before workspaces existed (migration 0003) */
+export const MAIN_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+
+export interface Workspace {
+  id: string;
+  name: string;
+  createdAt: string;
+  youtubeConnected: boolean;
+  channelTitle?: string;
+}
+
 export type ClipStatus =
   | "discovered" // trend found (metadata only)
   | "scripting" // Claude writing hook/script/title
@@ -14,15 +27,27 @@ export type VideoFormat = "short" | "long";
 export interface ClipScript {
   angle: string;
   thumbnailText: string;
-  segments: { startSec: number; voiceover: string; onScreenText: string; visual: string }[];
+  segments: { startSec: number; voiceover: string; onScreenText: string; visual: string; emphasis?: string[] }[];
+  /** Question to pin as the first comment (drives comments) */
+  pinnedComment?: string;
+  /** Other honest title angles for A/B testing */
+  titleAlternatives?: string[];
+  /** Full videos: chapter marks from the real render timing (added by the worker) */
+  chapters?: { t: number; title: string }[];
   sources: { title: string; channel: string; url: string }[];
   riskNotes: string;
   model: string;
   generatedAt: string;
 }
 
+export type Privacy = "private" | "unlisted" | "public";
+
 export interface Clip {
   id: string;
+  /** Visibility picked when approving (undefined = workspace default) */
+  privacy?: Privacy;
+  /** Workspace (= YouTube channel) this clip belongs to */
+  workspaceId: string;
   /** Game slug from src/lib/games.ts */
   game: string;
   /** True when the primary game (GTA 6) had no strong trend and we fell back */
@@ -44,6 +69,16 @@ export interface Clip {
   /** Rendered video stored in R2 */
   renderUrl?: string;
   youtubeUrl?: string;
+  youtubeVideoId?: string;
+  /** Performance (refreshed every few hours after publishing) */
+  views?: number;
+  likes?: number;
+  comments?: number;
+  /** YouTube Analytics: average % of the video watched (needs the analytics permission) */
+  avgViewPct?: number;
+  statsAt?: string;
+  /** The pinned-comment suggestion was posted on YouTube */
+  commentPosted?: boolean;
   /** Per-game, per-format YouTube playlist the video is added to */
   playlistId?: string;
   viralScore: number; // 0-100
@@ -83,10 +118,50 @@ export interface FormatSettings {
   maxSec: number;
 }
 
+/** How the worker builds each video — editable in Settings → Video & copyright */
+export interface RenderSettings {
+  /** auto = your footage from worker/footage/<game>/ when present, else gradient; gradient = never use footage */
+  footageMode: "auto" | "gradient";
+  /** Longest continuous piece of any footage file, in seconds (0 = no limit, one continuous piece) */
+  maxCutSec: number;
+  /** Keep the footage's own sound under the voiceover (off = picture only — far fewer Content ID matches) */
+  keepFootageAudio: boolean;
+  /** Footage sound level when kept, 0–100 % */
+  footageVolume: number;
+  /** macOS voice name (`say -v '?'`) */
+  voice: string;
+  /** Speaking speed, words per minute */
+  voiceRate: number;
+  /** Words per caption on Shorts (full videos use double) */
+  captionWords: number;
+  /** Corner watermark, empty = none */
+  brandText: string;
+}
+
+export const DEFAULT_RENDER: RenderSettings = {
+  footageMode: "auto",
+  maxCutSec: 3,
+  keepFootageAudio: false,
+  footageVolume: 15,
+  voice: "Samantha",
+  voiceRate: 185,
+  captionWords: 3,
+  brandText: "ClipPilot",
+};
+
+export const VOICES = ["Samantha", "Daniel", "Karen", "Moira", "Tessa", "Rishi", "Fred"] as const;
+
 export interface Settings {
   autopilot: boolean;
-  /** HH:MM, UTC */
+  /** HH:MM, UTC — the first of uploadTimes (discovery runs 4h before it) */
   uploadTime: string;
+  /** All daily upload slots, HH:MM UTC, sorted. Shorts are spread across them. */
+  uploadTimes: string[];
+  /** Extra checks of the primary game every few hours; only exceptional trends become extra Shorts */
+  breakingNews: boolean;
+  breakingEveryHours: number;
+  /** Which optional Google permissions the YouTube connection has (reconnect to add) */
+  youtubeScopes?: { analytics: boolean; comments: boolean };
   minViewsPerHour: number;
   maxFallbackDepth: number;
   lookbackHours: number;
@@ -98,8 +173,15 @@ export interface Settings {
     short: FormatSettings & { perDay: number };
     long: FormatSettings & { cadence: "daily" | "weekly"; clipsPerVideo: number };
   };
-  /** Ordered fallback chain; index 0 is tried first */
+  /** Ordered fallback chain; index 0 is tried first (derived from topics, kept for older code) */
   games: { slug: string; enabled: boolean }[];
+  /** Games / niches this workspace covers — editable in Settings → Topics */
+  topics: Topic[];
+  /** fallback = primary topic first, then the next until the daily count is met; per_topic = each topic its own daily count */
+  topicMode: TopicMode;
+  /** Channel-wide direction for Claude (tone, audience, recurring format) */
+  channelPersona: string;
+  render: RenderSettings;
   youtubeConnected: boolean;
   youtubeChannelTitle?: string;
   /** Visibility of uploads. Unverified Google apps can only upload as private (YouTube API policy). */
@@ -115,7 +197,7 @@ export interface Settings {
   };
 }
 
-export type ClipPatch = Partial<Pick<Clip, "status" | "title" | "description" | "tags" | "scheduledFor">>;
+export type ClipPatch = Partial<Pick<Clip, "status" | "title" | "description" | "tags" | "scheduledFor" | "privacy">>;
 
 export const STATUS_META: Record<ClipStatus, { label: string; tone: string }> = {
   discovered: { label: "Discovered", tone: "text-cyan bg-cyan/10" },

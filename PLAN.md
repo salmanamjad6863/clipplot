@@ -174,6 +174,48 @@ Dashboard (TanStack Query, polls)
   Clocks: the worker ticks every 5 min (`/api/worker/tick`, precise) + Vercel Cron daily backup
   (`vercel.ts` → `/api/cron/tick` 12:00 UTC, Hobby = 1/day). Settings shows next/last runs.
   Tests: `pnpm test:schedule`.
+- [x] **Dashboard controls + confirmations**
+  Settings → **Video & copyright** (stored in `settings.render`, sent to the worker with each render job):
+  footage mode (my footage cut up / gradient only), **max seconds per footage cut** (montage of random cuts from
+  all files for the game; 0 = one piece), keep footage sound on/off + volume (off by default — audio is what
+  Content ID matches most), narrator voice + speed, words per caption, watermark text.
+  Approve / Skip / Disconnect now open a confirm dialog that says exactly what will happen (upload now vs
+  daily slot vs waiting for YouTube connect, privacy, playlist, risk warning). Undo toast kept.
+- [x] **Workspaces — one per YouTube channel** (migration `0003_workspaces.sql`)
+  Same login, many channels (Brand Accounts). Each workspace has its own settings, games/fallback order,
+  playlists, schedule, autopilot, Video & copyright, trends (never-repeat is per workspace), clips and YouTube
+  connection. Existing data → "Main" workspace. Sidebar switcher (+ New workspace, optionally copying settings),
+  Settings → Workspace card (rename / delete with confirm). Current workspace = `cp_ws` cookie; scheduler +
+  worker serve all workspaces (one worker, global job queue); Google sign-in always shows the account/channel
+  picker and refuses a channel already connected to another workspace. Shared: YouTube API quota, footage folder.
+- [x] **Growth engine — batch 1** (manual control + smarter content)
+  - Manual: Trends search bar (keyword, last 7 days) or paste a YouTube link → joins the radar; **Make Short /
+    Full video** from any trend; **Find more now** (1 extra Short beyond the daily count); clip page **Swap trend**
+    (skip → next-best unused trend) and **Regenerate with a note** ("funnier", "focus on the map"…). All confirmed.
+  - Ranking = speed (log views/hour) + **breakout** (views ÷ uploader's subscribers: a small channel at 10× its
+    size = hot topic). Feeds the viral score.
+  - Claude rules: ≤8-word hook in <2s, 20–40s Shorts (target capped at 40s), new info every beat, payoff in the last
+    third, **loop ending** that flows into the hook, comment-question CTA (not "subscribe"), ≤50-char Shorts titles
+    with the game name first, keyword-first description, max 3 hashtags; full videos: 15-second promise, ranked
+    countdown, re-hooks ~every 60s. Outputs **emphasis words** (yellow, bigger in captions), a **comment to pin**,
+    and **2 alternative titles** for A/B tests.
+- [x] **Growth engine — batch 2** (migration `0004_growth.sql`)
+  - Performance loop every 6h per workspace: views/likes/comments (videos.list as the channel → works for private),
+    **average % watched** from YouTube Analytics (optional `yt-analytics.readonly` scope), Library columns +
+    Dashboard "last 7 days" card. **Learning loop**: best/worst recent videos of THIS channel (views/day × retention)
+    go into Claude's prompt.
+  - **Several upload times per day** (Settings → Publishing), Shorts spread across slots, full video at the first slot.
+  - **Breaking-news mode**: primary topic every 2–6h, only viral score 90+ becomes an extra Short (max 2/day).
+  - Full videos: **chapters** from real beat timing + **custom thumbnail** (blurred frame + big text; needs a
+    phone-verified channel). Suggested comment **auto-posted** once the video is public (`youtube.force-ssl`) — pin it in Studio.
+- [x] **Topics you manage from the dashboard** (same migration)
+  - Settings → **Topics**: edit presets or add any game/niche (search terms, title keywords, ≤3 hashtags, playlist,
+    color, notes for Claude), delete custom ones, drag order, on/off.
+  - Mode: **Fallback order** (primary first, then next until N/day) or **Daily count per topic** (e.g. 1/day for 4 games).
+  - **Channel style** text for Claude (tone, audience, recurring sign-off).
+  - **Visibility per video** in the Approve dialog (Private / Unlisted / Public; default = workspace setting).
+- [ ] **Later ideas**: hook A/B (two hooks, keep the better 1-hour swipe rate), per-workspace audience timezone for
+  slots, auto-generated end screens, voice cloning/premium TTS, trending-audio suggestions.
 - [ ] **Step 8 — Polish & deploy**
   Notifications (email/Telegram when a clip is ready), analytics card (views of published Shorts), deploy to Vercel, production env setup.
 

@@ -41,13 +41,42 @@ export function isDue(minutesOfDay: number, lastRunIso: string | null, now: numb
   return occ;
 }
 
-export function scheduleFor(uploadTime: string, now: number, last: { discovery: string | null; release: string | null }) {
-  const dMin = discoveryMinutes(uploadTime);
-  const rMin = parseHHMM(uploadTime);
+/**
+ * Daily plan for one workspace. Several upload slots are allowed: discovery runs before the FIRST slot;
+ * a release is due when the most recent slot has passed and hasn't been released yet.
+ */
+export function scheduleFor(
+  uploadTimes: string | string[],
+  now: number,
+  last: { discovery: string | null; release: string | null },
+) {
+  const times = (Array.isArray(uploadTimes) ? uploadTimes : [uploadTimes]).map(parseHHMM).sort((a, b) => a - b);
+  const first = times[0];
+  const dMin = (((first - DISCOVERY_LEAD_HOURS * 60) % 1440) + 1440) % 1440;
+
+  // most recent slot occurrence across all times
+  const occ = Math.max(...times.map((t) => lastOccurrence(t, now)));
+  const slotMin = times.find((t) => lastOccurrence(t, now) === occ)!;
+  // with several slots, a missed one only catches up until the next slot is near
+  const gapMin = times.length > 1 ? Math.min(...times.map((t) => ((t - slotMin + 1440) % 1440) || 1440)) : 1440;
+  const catchup = Math.min(RELEASE_CATCHUP_HOURS, gapMin / 60 - 0.25);
+  const releaseDue = now - occ <= catchup * H && !(last.release && Date.parse(last.release) >= occ) ? occ : null;
+
+  const discoveryDue = isDue(dMin, last.discovery, now, DISCOVERY_CATCHUP_HOURS);
+  const nextRelease = releaseDue ?? Math.min(...times.map((t) => nextOccurrence(t, now)).filter((x) => x > now), ...times.map((t) => lastOccurrence(t, now) + 24 * H));
   return {
-    discoveryDue: isDue(dMin, last.discovery, now, DISCOVERY_CATCHUP_HOURS),
-    releaseDue: isDue(rMin, last.release, now, RELEASE_CATCHUP_HOURS),
-    nextDiscoveryAt: new Date(nextOccurrence(dMin, now) - (isDue(dMin, last.discovery, now, DISCOVERY_CATCHUP_HOURS) ? 24 * H : 0)).toISOString(),
-    nextReleaseAt: new Date(nextOccurrence(rMin, now) - (isDue(rMin, last.release, now, RELEASE_CATCHUP_HOURS) ? 24 * H : 0)).toISOString(),
+    discoveryDue,
+    releaseDue,
+    /** Which slot of the day is due (0 = first) — the full video goes out at the first slot */
+    releaseSlotIndex: releaseDue !== null ? times.indexOf(slotMin) : null,
+    slotsPerDay: times.length,
+    nextDiscoveryAt: new Date(nextOccurrence(dMin, now) - (discoveryDue ? 24 * H : 0)).toISOString(),
+    nextReleaseAt: new Date(nextRelease).toISOString(),
   };
+}
+
+/** Start of the current N-hour window (UTC) — used for breaking-news checks and stats refreshes */
+export function windowStart(now: number, everyHours: number): number {
+  const ms = Math.max(1, everyHours) * H;
+  return Math.floor(now / ms) * ms;
 }

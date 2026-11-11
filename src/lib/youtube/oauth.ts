@@ -6,7 +6,18 @@ import { HttpError } from "../api";
  * Scope `youtube` = upload videos + manage playlists on the connected channel.
  */
 export const STATE_COOKIE = "cp_oauth_state";
+/** Which workspace started the Google sign-in (the callback connects that workspace's channel) */
+export const OAUTH_WS_COOKIE = "cp_oauth_ws";
+/** Required: upload + manage playlists */
 export const SCOPES = ["https://www.googleapis.com/auth/youtube"];
+/**
+ * Optional (Google lets the user untick them): read retention from YouTube Analytics, and post the
+ * suggested comment under new videos. Features that need them switch off gracefully when missing.
+ */
+export const OPTIONAL_SCOPES = [
+  "https://www.googleapis.com/auth/yt-analytics.readonly",
+  "https://www.googleapis.com/auth/youtube.force-ssl",
+];
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
@@ -28,9 +39,10 @@ export function authorizeUrl(origin: string, state: string) {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: SCOPES.join(" "),
+    scope: [...SCOPES, ...OPTIONAL_SCOPES].join(" "),
     access_type: "offline", // → refresh token
-    prompt: "consent", // always return a refresh token, even on reconnect
+    // account/channel picker every time (each Brand Account channel is its own choice) + always a refresh token
+    prompt: "select_account consent",
     include_granted_scopes: "true",
     state,
   });
@@ -76,7 +88,7 @@ export async function exchangeCode(origin: string, code: string) {
   if (!SCOPES.every((s) => t.scope.split(" ").includes(s))) {
     throw new HttpError(400, "YouTube permission wasn't granted — tick the YouTube checkbox on Google's consent screen");
   }
-  return { accessToken: t.access_token, refreshToken: t.refresh_token, expiresIn: t.expires_in };
+  return { accessToken: t.access_token, refreshToken: t.refresh_token, expiresIn: t.expires_in, scopes: t.scope };
 }
 
 /** Short-lived access token from the stored refresh token (~1h validity). */

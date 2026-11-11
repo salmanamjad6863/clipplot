@@ -13,6 +13,22 @@ Already done: Supabase keys + tables + seed, YouTube API key, FFmpeg, `CRON_SECR
 Supabase → **SQL Editor → New query** → paste all of `supabase/migrations/0002_publishing.sql` → **Run**.
 Check: `pnpm db:check` → every line ✓.
 
+## 2b. Database update for workspaces — pending
+Supabase → **SQL Editor → New query** → paste all of `supabase/migrations/0003_workspaces.sql` → **Run**.
+Your current data becomes the **Main** workspace. Check: `pnpm db:check`.
+
+**Several channels:** sidebar → workspace name → **New workspace** → Settings → **Connect YouTube** → in Google's
+account list pick the other channel (Brand Accounts show as separate entries). Each channel can be connected to
+one workspace only. Add every channel's Google login as an OAuth **test user**.
+
+## 2c. Database update for growth + topics — pending
+Supabase → **SQL Editor → New query** → paste all of `supabase/migrations/0004_growth.sql` → **Run**.
+Check: `pnpm db:check` (every line ✓). Until then: topics can't be saved and stats don't refresh.
+
+**Then reconnect YouTube once** (Settings → Connect YouTube, tick every permission) so ClipPilot can read
+retention (% watched) and post the suggested comment. In Google Cloud → OAuth consent screen → **Data access**,
+also add these two scopes: `.../auth/yt-analytics.readonly` and `.../auth/youtube.force-ssl`.
+
 ## 3. Google OAuth client (uploading) — pending
 In the same Google Cloud project as your YouTube API key:
 
@@ -64,7 +80,8 @@ pnpm worker     # terminal 2 — renders + uploads, polls every 30s
 4. YouTube Studio: the video (private) is in the **GTA 6 Shorts** playlist.
 
 Optional: put your own gameplay / official trailer clips in `worker/footage/gta-6/` (see its README) —
-otherwise videos use an animated gradient background.
+otherwise videos use an animated gradient background. **Settings → Video & copyright** controls how they're
+used: max seconds per cut (default 3s), footage sound (off by default), voice, captions, watermark.
 
 ## 6. Later — Step 8 (deploy)
 Vercel project + all `.env.local` values as Vercel env vars (including `CRON_SECRET` — Vercel sends it to the

@@ -3,13 +3,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
-import type { Clip, ClipPatch, Settings, Trend } from "./types";
+import { GAMES } from "./games";
+import { presetTopic, type Topic } from "./topics";
+import type { Clip, ClipPatch, Settings, Trend, Workspace } from "./types";
 
 export const queryKeys = {
   clips: ["clips"] as const,
   clip: (id: string) => ["clips", id] as const,
   trends: ["trends"] as const,
   settings: ["settings"] as const,
+  workspaces: ["workspaces"] as const,
 };
 
 const noopSubscribe = () => () => {};
@@ -89,8 +92,9 @@ export function useUpdateClip() {
 export function useRegenerateScript() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api<Clip>(`/api/clips/${id}/script`, { method: "POST" }),
-    onMutate: (id) => {
+    mutationFn: ({ id, note }: { id: string; note?: string }) =>
+      api<Clip>(`/api/clips/${id}/script`, { method: "POST", body: JSON.stringify({ note }) }),
+    onMutate: ({ id }) => {
       qc.setQueryData<Clip[]>(queryKeys.clips, (l) => l?.map((c) => (c.id === id ? { ...c, status: "scripting" } : c)));
       qc.setQueryData<Clip>(queryKeys.clip(id), (c) => (c ? { ...c, status: "scripting" } : c));
     },
@@ -99,7 +103,7 @@ export function useRegenerateScript() {
       toast.success("Script ready", { description: clip.title });
     },
     onError: (err) => toast.error(err.message),
-    onSettled: (_d, _e, id) => {
+    onSettled: (_d, _e, { id }) => {
       qc.invalidateQueries({ queryKey: queryKeys.clips });
       qc.invalidateQueries({ queryKey: queryKeys.clip(id) });
     },
@@ -124,7 +128,8 @@ export interface DiscoveryResult {
 export function useRunDiscovery() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<DiscoveryResult>("/api/discover", { method: "POST" }),
+    mutationFn: (opts?: { extra?: boolean }) =>
+      api<DiscoveryResult>("/api/discover", { method: "POST", body: JSON.stringify({ extra: Boolean(opts?.extra) }) }),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: queryKeys.trends });
       qc.invalidateQueries({ queryKey: queryKeys.clips });
@@ -147,11 +152,120 @@ export function useRunDiscovery() {
   });
 }
 
+/** Manual lookup: keyword (last 7 days) or a pasted YouTube link → results join the radar */
+export function useLookup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { query?: string; url?: string; game: string }) =>
+      api<{ trends: Trend[] }>("/api/trends/search", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: queryKeys.trends });
+      toast.success(r.trends.length ? `${r.trends.length} video(s) added to the radar` : "Nothing found for that search");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+}
+
+/** "Make clip" from any trend → Claude scripts it in the background */
+export function useClipFromTrend() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { trendId: string; format: "short" | "long" }) =>
+      api<Clip>(`/api/trends/${v.trendId}/clip`, { method: "POST", body: JSON.stringify({ format: v.format }) }),
+    onSuccess: (clip) => {
+      qc.invalidateQueries({ queryKey: queryKeys.trends });
+      qc.invalidateQueries({ queryKey: queryKeys.clips });
+      toast.success("Clip created — Claude is writing the script", { description: clip.title });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+}
+
+/** "Swap trend": skip this clip, build a new one from the next-best trend */
+export function useSwapTrend() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<Clip>(`/api/clips/${id}/swap`, { method: "POST" }),
+    onSuccess: (clip) => {
+      qc.invalidateQueries({ queryKey: queryKeys.clips });
+      qc.invalidateQueries({ queryKey: queryKeys.trends });
+      toast.success("Swapped — new clip on the way", { description: clip.title });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+}
+
 /* ---------- Settings ---------- */
 
 export function useSettings() {
   const hydrated = useHydrated();
   return hydrationSafe(useQuery({ queryKey: queryKeys.settings, queryFn: () => api<Settings>("/api/settings") }), hydrated);
+}
+
+/* ---------- Workspaces (one per YouTube channel) ---------- */
+
+export function useWorkspaces() {
+  const hydrated = useHydrated();
+  return hydrationSafe(
+    useQuery({
+      queryKey: queryKeys.workspaces,
+      queryFn: () => api<{ workspaces: Workspace[]; currentId: string }>("/api/workspaces"),
+    }),
+    hydrated,
+  );
+}
+
+/** Everything on screen belongs to the old workspace → drop all cached data and refetch. */
+function useResetAll() {
+  const qc = useQueryClient();
+  return () => qc.resetQueries();
+}
+
+export function useSwitchWorkspace() {
+  const reset = useResetAll();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>("/api/workspaces/current", { method: "POST", body: JSON.stringify({ id }) }),
+    onSuccess: () => reset(),
+    onError: (err) => toast.error(err.message),
+  });
+}
+
+export function useCreateWorkspace() {
+  const reset = useResetAll();
+  return useMutation({
+    mutationFn: (v: { name: string; copySettings: boolean }) =>
+      api<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: (ws) => {
+      reset();
+      toast.success(`Workspace "${ws.name}" created`, { description: "Connect its YouTube channel in Settings." });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+}
+
+export function useRenameWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; name: string }) =>
+      api<Workspace>(`/api/workspaces/${v.id}`, { method: "PATCH", body: JSON.stringify({ name: v.name }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.workspaces });
+      toast.success("Workspace renamed");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+}
+
+export function useDeleteWorkspace() {
+  const reset = useResetAll();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(`/api/workspaces/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      reset();
+      toast.success("Workspace deleted");
+    },
+    onError: (err) => toast.error(err.message),
+  });
 }
 
 export function useDisconnectYouTube() {
@@ -164,6 +278,18 @@ export function useDisconnectYouTube() {
     },
     onError: (err) => toast.error(err.message),
   });
+}
+
+/** Current workspace's topics (falls back to the built-in presets while loading) */
+export function useTopics(): Topic[] {
+  const { data } = useSettings();
+  return data?.topics ?? PRESET_TOPICS;
+}
+const PRESET_TOPICS: Topic[] = GAMES.map((g) => presetTopic(g.slug, g.priority)!);
+
+export function useTopicMap(): Record<string, Topic> {
+  const topics = useTopics();
+  return Object.fromEntries(topics.map((t) => [t.slug, t]));
 }
 
 export function useSaveSettings() {

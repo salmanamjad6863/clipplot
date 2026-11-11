@@ -2,26 +2,28 @@ import "server-only";
 import { HttpError } from "../api";
 import { decrypt } from "../crypto";
 import { getStore } from "../data";
-import { GAMES_BY_SLUG } from "../games";
+import type { Topic } from "../topics";
 import type { Clip, Settings } from "../types";
 import { refreshAccessToken } from "./oauth";
 
 const API = "https://www.googleapis.com/youtube/v3";
 
-let cached: { token: string; expiresAt: number } | null = null;
+// one access token per workspace (= channel)
+const cached = new Map<string, { token: string; expiresAt: number }>();
 
-/** Fresh access token for the connected channel (cached until ~5 min before expiry). */
-export async function getAccessToken(): Promise<{ accessToken: string; expiresAt: number }> {
-  if (cached && cached.expiresAt - Date.now() > 5 * 60_000) return { accessToken: cached.token, expiresAt: cached.expiresAt };
-  const { refreshTokenEnc } = await getStore().getYouTubeCredentials();
-  if (!refreshTokenEnc) throw new HttpError(409, "YouTube isn't connected — connect your channel in Settings");
+/** Fresh access token for a workspace's channel (cached until ~5 min before expiry). */
+export async function getAccessToken(ws: string): Promise<{ accessToken: string; expiresAt: number }> {
+  const c = cached.get(ws);
+  if (c && c.expiresAt - Date.now() > 5 * 60_000) return { accessToken: c.token, expiresAt: c.expiresAt };
+  const { refreshTokenEnc } = await getStore(ws).getYouTubeCredentials();
+  if (!refreshTokenEnc) throw new HttpError(409, "YouTube isn't connected for this workspace — connect it in Settings");
   const t = await refreshAccessToken(decrypt(refreshTokenEnc));
-  cached = { token: t.accessToken, expiresAt: t.expiresAt };
+  cached.set(ws, { token: t.accessToken, expiresAt: t.expiresAt });
   return t;
 }
 
-export function forgetAccessToken() {
-  cached = null;
+export function forgetAccessToken(ws: string) {
+  cached.delete(ws);
 }
 
 async function yt<T>(path: string, token: string, init?: RequestInit & { query?: Record<string, string> }): Promise<T> {
@@ -52,13 +54,19 @@ export async function fetchMyChannel(token: string) {
 
 /** Title/description/tags/privacy for videos.insert — single source of truth, used by the worker. */
 export function buildUploadMetadata(clip: Clip, settings: Settings) {
-  const game = GAMES_BY_SLUG[clip.game];
+  const game = settings.topics.find((t) => t.slug === clip.game);
   const isShort = clip.format === "short";
   // #Shorts only on Shorts; game hashtags on both
   const tags = (game?.hashtags ?? []).filter((h) => isShort || h.toLowerCase() !== "#shorts");
   let description = clip.description.trim();
   for (const h of tags) if (!description.includes(h)) description += (description ? "\n" : "") + h;
   if (!isShort) description = description.replace(/\s*#Shorts\b/gi, "");
+  // full videos: chapters (timestamps help search + keep viewers navigating instead of leaving)
+  const ch = clip.script?.chapters ?? [];
+  if (!isShort && ch.length >= 3 && ch[0].t === 0) {
+    const ts = (t: number) => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+    description += `\n\nChapters\n${ch.map((c) => `${ts(c.t)} ${c.title}`).join("\n")}`;
+  }
 
   return {
     snippet: {
@@ -70,40 +78,41 @@ export function buildUploadMetadata(clip: Clip, settings: Settings) {
       defaultAudioLanguage: "en",
     },
     status: {
-      privacyStatus: settings.youtubePrivacy,
+      privacyStatus: clip.privacy ?? settings.youtubePrivacy, // chosen when approving, else the workspace default
       selfDeclaredMadeForKids: false,
       embeddable: true,
     },
   };
 }
 
-function playlistTitle(gameSlug: string, format: "short" | "long") {
-  const g = GAMES_BY_SLUG[gameSlug];
-  const name = g?.name ?? gameSlug;
-  return format === "short" ? (g?.playlistTitle ?? `${name} Shorts`) : `${name} — Full Videos`;
+function playlistTitle(topic: Topic | undefined, gameSlug: string, format: "short" | "long") {
+  const name = topic?.name ?? gameSlug;
+  return format === "short" ? topic?.playlistTitle || `${name} Shorts` : `${name} — Full Videos`;
 }
 
-async function createPlaylist(token: string, gameSlug: string, format: "short" | "long") {
+async function createPlaylist(ws: string, token: string, gameSlug: string, format: "short" | "long") {
+  const topic = (await getStore(ws).getSettings()).topics.find((t) => t.slug === gameSlug);
   const r = await yt<{ id: string }>("playlists", token, {
     method: "POST",
     query: { part: "snippet,status" },
     body: JSON.stringify({
       snippet: {
-        title: playlistTitle(gameSlug, format),
-        description: `Daily ${format === "short" ? "Shorts" : "breakdowns"} about ${GAMES_BY_SLUG[gameSlug]?.name ?? gameSlug}.`,
+        title: playlistTitle(topic, gameSlug, format),
+        description: `Daily ${format === "short" ? "Shorts" : "breakdowns"} about ${topic?.name ?? gameSlug}.`,
       },
       status: { privacyStatus: "public" },
     }),
   });
-  await getStore().setPlaylistId(gameSlug, format, r.id);
-  console.info(`[youtube] created playlist "${playlistTitle(gameSlug, format)}" ${r.id}`);
+  await getStore(ws).setPlaylistId(gameSlug, format, r.id);
+  console.info(`[youtube] created playlist "${playlistTitle(topic, gameSlug, format)}" ${r.id}`);
   return r.id;
 }
 
 /** Adds a published video to its game's playlist, creating (or re-creating) the playlist as needed. */
 export async function addToGamePlaylist(clip: Clip, videoId: string): Promise<string> {
-  const { accessToken } = await getAccessToken();
-  let playlistId = (await getStore().getPlaylistId(clip.game, clip.format)) ?? (await createPlaylist(accessToken, clip.game, clip.format));
+  const ws = clip.workspaceId;
+  const { accessToken } = await getAccessToken(ws);
+  let playlistId = (await getStore(ws).getPlaylistId(clip.game, clip.format)) ?? (await createPlaylist(ws, accessToken, clip.game, clip.format));
   const insert = (pid: string) =>
     yt("playlistItems", accessToken, {
       method: "POST",
@@ -115,10 +124,10 @@ export async function addToGamePlaylist(clip: Clip, videoId: string): Promise<st
   } catch (err) {
     // playlist was deleted on YouTube → make a new one and retry once
     if ((err as { reason?: string }).reason === "playlistNotFound") {
-      playlistId = await createPlaylist(accessToken, clip.game, clip.format);
+      playlistId = await createPlaylist(ws, accessToken, clip.game, clip.format);
       await insert(playlistId);
     } else throw err;
   }
-  await getStore().setClipPlaylist(clip.id, playlistId);
+  await getStore(ws).setClipPlaylist(clip.id, playlistId);
   return playlistId;
 }

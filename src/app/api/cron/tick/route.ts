@@ -16,8 +16,8 @@ export async function GET(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
   return handle("cron tick", async () => {
-    const { result, background } = await schedulerTick("vercel-cron");
+    const { results, background } = await schedulerTick("vercel-cron");
     if (background) after(background);
-    return result;
+    return results;
   });
 }

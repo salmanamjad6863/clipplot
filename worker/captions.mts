@@ -16,6 +16,8 @@ export interface Canvas {
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+const normWord = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+
 /** Break text into lines of at most `max` chars without splitting words */
 function wrap(text: string, max: number): string[] {
   const lines: string[] = [];
@@ -33,7 +35,7 @@ function wrap(text: string, max: number): string[] {
 export async function captionFrame(
   file: string,
   c: Canvas,
-  opts: { caption?: string; title?: string; brand?: string },
+  opts: { caption?: string; title?: string; brand?: string; emphasis?: string[] },
 ): Promise<string> {
   const parts: string[] = [];
 
@@ -55,12 +57,17 @@ export async function captionFrame(
   if (opts.caption) {
     const size = c.vertical ? 92 : 64;
     const lines = wrap(opts.caption.toUpperCase(), c.vertical ? 16 : 36).slice(0, 3);
-    const yBase = c.vertical ? c.h * 0.66 : c.h * 0.84;
+    // Shorts: captions sit above the bottom UI (title/buttons) but below the face-zone
+    const yBase = c.vertical ? c.h * 0.62 : c.h * 0.84;
+    const hot = new Set((opts.emphasis ?? []).flatMap((e) => e.split(/\s+/)).map(normWord).filter(Boolean));
     parts.push(
-      ...lines.map(
-        (l, i) =>
-          `<text x="50%" y="${yBase + (i - (lines.length - 1) / 2) * size * 1.12}" text-anchor="middle" font-family="Impact, Arial Black" font-size="${size}" fill="#ffffff" stroke="#000000" stroke-width="${c.vertical ? 14 : 10}" stroke-linejoin="round" paint-order="stroke">${esc(l)}</text>`,
-      ),
+      ...lines.map((l, i) => {
+        // highlighted key words: yellow + slightly bigger (a common retention style)
+        const words = l.split(" ").map((w) =>
+          hot.has(normWord(w)) ? `<tspan fill="#ffd84d" font-size="${Math.round(size * 1.12)}">${esc(w)}</tspan>` : esc(w),
+        );
+        return `<text x="50%" y="${yBase + (i - (lines.length - 1) / 2) * size * 1.14}" text-anchor="middle" font-family="Impact, Arial Black" font-size="${size}" fill="#ffffff" stroke="#000000" stroke-width="${c.vertical ? 14 : 10}" stroke-linejoin="round" paint-order="stroke">${words.join(" ")}</text>`;
+      }),
     );
   }
 

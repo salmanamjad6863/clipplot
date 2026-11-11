@@ -1,6 +1,7 @@
 import "server-only";
 import { GAMES } from "../games";
-import type { Clip, ClipPatch, Settings, Trend } from "../types";
+import { presetTopic } from "../topics";
+import { DEFAULT_RENDER, MAIN_WORKSPACE_ID, type Clip, type ClipPatch, type Settings, type Trend } from "../types";
 import type { Store } from "./store";
 
 /**
@@ -24,7 +25,8 @@ const trends: Trend[] = [
   { id: "t9", game: "minecraft", videoId: "Redst0neTrk", url: yt("Redst0neTrk"), title: "This redstone trick broke the internet", channel: "BlockLab", views: 2_100_000, viewsPerHour: 60_000, durationSec: 59, publishedAt: h(40), foundAt: h(28), status: "used" },
 ];
 
-const clip = (c: Omit<Clip, "description" | "tags" | "riskScore"> & Partial<Clip>): Clip => ({
+const clip = (c: Omit<Clip, "description" | "tags" | "riskScore" | "workspaceId"> & Partial<Clip>): Clip => ({
+  workspaceId: MAIN_WORKSPACE_ID,
   description: `${c.hook}\n\nDaily ${c.format === "short" ? "Short" : "breakdown"} by ClipPilot.`,
   tags: ["gaming"],
   riskScore: 12,
@@ -44,6 +46,9 @@ const clips: Clip[] = [
 let settings: Settings = {
   autopilot: false,
   uploadTime: "16:00",
+  uploadTimes: ["16:00"],
+  breakingNews: false,
+  breakingEveryHours: 3,
   minViewsPerHour: 5_000,
   maxFallbackDepth: 4,
   lookbackHours: 48,
@@ -54,8 +59,12 @@ let settings: Settings = {
     long: { enabled: true, minSec: 8 * 60, maxSec: 12 * 60, cadence: "weekly", clipsPerVideo: 8 },
   },
   games: [...GAMES].sort((a, b) => a.priority - b.priority).map((g) => ({ slug: g.slug, enabled: true })),
+  topics: GAMES.map((g) => presetTopic(g.slug, g.priority)!),
+  topicMode: "fallback",
+  channelPersona: "",
   youtubeConnected: false,
   youtubePrivacy: "private",
+  render: DEFAULT_RENDER,
 };
 
 export const mockStore: Store = {
@@ -72,7 +81,7 @@ export const mockStore: Store = {
   listTrends: async () => [...trends].sort((a, b) => b.foundAt.localeCompare(a.foundAt) || b.viewsPerHour - a.viewsPerHour),
   getSettings: async () => settings,
   async updateSettings(next: Partial<Settings>) {
-    settings = { ...settings, ...next, formats: { ...settings.formats, ...next.formats } };
+    settings = { ...settings, ...next, formats: { ...settings.formats, ...next.formats }, render: { ...settings.render, ...next.render } };
     return settings;
   },
 
@@ -153,8 +162,14 @@ export const mockStore: Store = {
   },
   async setClipPlaylist() {},
   async getSchedulerState() {
-    return { lastDiscoveryAt: null, lastReleaseAt: null };
+    return { lastDiscoveryAt: null, lastReleaseAt: null, lastBreakingAt: null, lastStatsAt: null };
   },
+  async publishedForStats() {
+    return [];
+  },
+  async saveStats() {},
+  async markCommentPosted() {},
+  async saveChapters() {},
   async claimSchedulerRun() {
     return false; // scheduler is off in mock mode
   },
@@ -168,6 +183,37 @@ export const mockStore: Store = {
     return [];
   },
   async clearPreview() {},
+  async purgeStaleYouTubeData() {
+    return { trends: 0, stats: 0 };
+  },
+  async createClip(c) {
+    const created: Clip = {
+      id: `c${clips.length + 1}-${Date.now()}`,
+      workspaceId: MAIN_WORKSPACE_ID,
+      game: c.game,
+      isFallback: c.isFallback ?? false,
+      format: c.format,
+      durationSec: c.durationSec,
+      title: c.title,
+      hook: "",
+      description: "",
+      tags: [],
+      status: "discovered",
+      trendIds: c.trendIds,
+      trendUrl: c.trendUrl,
+      viralScore: c.viralScore,
+      riskScore: 0,
+      createdAt: new Date().toISOString(),
+    };
+    clips.push(created);
+    for (const t of trends) if (c.trendIds.includes(t.id)) t.status = "used";
+    return created;
+  },
+  async countShortsByGameSince(since) {
+    const out: Record<string, number> = {};
+    for (const c of clips) if (c.format === "short" && c.createdAt >= since) out[c.game] = (out[c.game] ?? 0) + 1;
+    return out;
+  },
   async saveDiscovery(plan) {
     const nowIso = new Date().toISOString();
     const idByVideo = new Map<string, string>();
@@ -180,6 +226,7 @@ export const mockStore: Store = {
     for (const c of plan.clips) {
       clips.push({
         id: `c${clips.length + 1}-${Date.now()}`,
+        workspaceId: MAIN_WORKSPACE_ID,
         game: c.game,
         isFallback: c.isFallback,
         format: c.format,

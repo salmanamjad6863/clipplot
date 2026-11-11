@@ -13,10 +13,10 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { createClient } from "@supabase/supabase-js";
-import type { Clip } from "../src/lib/types.ts";
+import { DEFAULT_RENDER, type Clip, type RenderSettings } from "../src/lib/types.ts";
 import { run } from "./proc.mts";
-import { OUTPUT_DIR, fullPathFor, renderClip } from "./render.mts";
-import { uploadToYouTube, type UploadMetadata } from "./youtube.mts";
+import { OUTPUT_DIR, fullPathFor, renderClip, thumbPathFor } from "./render.mts";
+import { setThumbnail, uploadToYouTube, type UploadMetadata } from "./youtube.mts";
 
 const API = (process.env.CLIPPILOT_URL || "http://localhost:3000").replace(/\/$/, "");
 const SECRET = process.env.WORKER_SECRET;
@@ -54,7 +54,7 @@ async function uploadPreview(jobId: string, file: string) {
 type JobKind = "render" | "upload";
 
 async function processOne(type: JobKind): Promise<boolean> {
-  const { job, clip } = await call<{ job: { id: string; attempts: number } | null; clip?: Clip }>("claim", {
+  const { job, clip, render } = await call<{ job: { id: string; attempts: number } | null; clip?: Clip; render?: RenderSettings }>("claim", {
     workerId: WORKER_ID,
     type,
   });
@@ -64,21 +64,26 @@ async function processOne(type: JobKind): Promise<boolean> {
   const started = Date.now();
   try {
     if (type === "render") {
-      const r = await renderClip(clip, (m) => log(`  ${m}`));
+      const r = await renderClip(clip, (m) => log(`  ${m}`), render);
       log("  uploading preview…");
       await uploadPreview(job.id, r.previewPath);
-      await call("complete", { jobId: job.id, durationSec: r.durationSec });
+      await call("complete", { jobId: job.id, durationSec: r.durationSec, chapters: r.chapters });
       log(`✓ rendered in ${((Date.now() - started) / 1000).toFixed(0)}s → ${r.fullPath}`);
     } else {
       // full-quality file from the render step; re-render if it was deleted or rendered elsewhere
       let file = fullPathFor(clip);
       if (!existsSync(file)) {
         log("  full video not on this machine — re-rendering it first");
-        file = (await renderClip(clip, (m) => log(`  ${m}`))).fullPath;
+        file = (await renderClip(clip, (m) => log(`  ${m}`), render)).fullPath;
       }
-      const plan = await call<{ accessToken: string; metadata: UploadMetadata }>("upload-plan", { jobId: job.id });
-      log(`  uploading to YouTube as ${String(plan.metadata.status.privacyStatus)}…`);
+      const plan = await call<{ accessToken: string; channel: string | null; metadata: UploadMetadata }>("upload-plan", { jobId: job.id });
+      log(`  uploading to YouTube${plan.channel ? ` (${plan.channel})` : ""} as ${String(plan.metadata.status.privacyStatus)}…`);
       const videoId = await uploadToYouTube(file, plan.metadata, plan.accessToken, (m) => log(`  ${m}`));
+      const thumb = thumbPathFor(clip);
+      if (clip.format === "long" && existsSync(thumb)) {
+        const err = await setThumbnail(videoId, await readFile(thumb), plan.accessToken);
+        log(err ? `  thumbnail not set (${err}) — verify your channel's phone number to allow custom thumbnails` : "  custom thumbnail set");
+      }
       const done = await call<{ youtubeUrl: string; playlistId: string | null }>("published", { jobId: job.id, videoId });
       log(`✓ published ${done.youtubeUrl}${done.playlistId ? " (+ playlist)" : ""} in ${((Date.now() - started) / 1000).toFixed(0)}s`);
     }
@@ -93,6 +98,7 @@ async function processOne(type: JobKind): Promise<boolean> {
 }
 
 interface TickResult {
+  workspaceName: string;
   discovery: string;
   release: { status: string; queued: number };
   recovered: number;
@@ -103,19 +109,23 @@ interface TickResult {
 
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-/** Drives the daily schedule and removes local files of videos published > 7 days ago. */
+/** Drives every workspace's daily schedule and removes local files of videos published > 7 days ago. */
 async function tick(verbose = false) {
-  const r = await call<TickResult>("tick", {});
-  if (r.discovery === "started") log("⏰ daily discovery started (YouTube trends → Claude scripts)");
-  if (r.release.status === "released") log(`⏰ upload slot: ${r.release.queued} approved video(s) released`);
-  if (r.recovered) log(`↺ recovered ${r.recovered} stuck clip(s)`);
-  for (const id of r.cleanedUp) {
-    if (!/^[0-9a-f-]{36}$/i.test(id)) continue; // only ever delete clip-id folders
-    await rm(path.join(OUTPUT_DIR, id), { recursive: true, force: true });
-  }
-  if (r.cleanedUp.length) log(`🧹 removed ${r.cleanedUp.length} old published video(s) from worker/output`);
-  if (verbose || r.discovery === "started") {
-    log(`next discovery ${hhmm(r.nextDiscoveryAt)} · next upload slot ${hhmm(r.nextReleaseAt)} · uploads: ${r.release.status}`);
+  const results = await call<TickResult[]>("tick", {});
+  for (const r of results) {
+    const ws = results.length > 1 ? `[${r.workspaceName}] ` : "";
+    if (r.discovery === "started") log(`⏰ ${ws}daily discovery started (YouTube trends → Claude scripts)`);
+    if (r.discovery === "breaking") log(`📰 ${ws}breaking-news check running`);
+    if (r.release.status === "released") log(`⏰ ${ws}upload slot: ${r.release.queued} approved video(s) released`);
+    if (r.recovered) log(`↺ ${ws}recovered ${r.recovered} stuck clip(s)`);
+    for (const id of r.cleanedUp) {
+      if (!/^[0-9a-f-]{36}$/i.test(id)) continue; // only ever delete clip-id folders
+      await rm(path.join(OUTPUT_DIR, id), { recursive: true, force: true });
+    }
+    if (r.cleanedUp.length) log(`🧹 ${ws}removed ${r.cleanedUp.length} old published video(s) from worker/output`);
+    if (verbose || r.discovery === "started") {
+      log(`${ws}next discovery ${hhmm(r.nextDiscoveryAt)} · next upload slot ${hhmm(r.nextReleaseAt)} · uploads: ${r.release.status}`);
+    }
   }
 }
 
@@ -137,8 +147,8 @@ async function main() {
   await preflight();
 
   if (args[0] === "--local") {
-    const clip = JSON.parse(await readFile(args[1], "utf8")) as Clip;
-    const r = await renderClip(clip, (m) => log(m));
+    const clip = JSON.parse(await readFile(args[1], "utf8")) as Clip & { render?: Partial<RenderSettings> };
+    const r = await renderClip(clip, (m) => log(m), { ...DEFAULT_RENDER, ...clip.render });
     log(`✓ ${r.fullPath} (${r.durationSec.toFixed(1)}s), preview ${r.previewPath}`);
     return;
   }

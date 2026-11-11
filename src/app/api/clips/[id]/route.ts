@@ -1,4 +1,5 @@
 import { HttpError, handle } from "@/lib/api";
+import { currentWorkspaceId } from "@/lib/workspaces";
 import { getStore } from "@/lib/data";
 import { queueApprovedUploads } from "@/lib/publish";
 import type { ClipPatch, ClipStatus } from "@/lib/types";
@@ -8,7 +9,7 @@ const ALLOWED_STATUS: ClipStatus[] = ["awaiting_approval", "scheduled", "rejecte
 export async function GET(_req: Request, ctx: RouteContext<"/api/clips/[id]">) {
   const { id } = await ctx.params;
   return handle("get clip", async () => {
-    const clip = await getStore().getClip(id);
+    const clip = await getStore(await currentWorkspaceId()).getClip(id);
     if (!clip) throw new HttpError(404, "Not found");
     return clip;
   });
@@ -27,9 +28,16 @@ export async function PATCH(req: Request, ctx: RouteContext<"/api/clips/[id]">) 
     if (typeof body.description === "string") patch.description = body.description.slice(0, 5000);
     if (Array.isArray(body.tags)) patch.tags = body.tags.map(String).slice(0, 30);
     if (typeof body.scheduledFor === "string") patch.scheduledFor = body.scheduledFor;
+    if (body.privacy !== undefined) {
+      if (!["private", "unlisted", "public"].includes(body.privacy)) throw new HttpError(400, "Invalid visibility");
+      patch.privacy = body.privacy;
+    }
     if (Object.keys(patch).length === 0) throw new HttpError(400, "Nothing to update");
 
-    const store = getStore();
+    const ws = await currentWorkspaceId();
+    const store = getStore(ws);
+    // privacy equal to the workspace default isn't stored (null = follow the default)
+    if (patch.privacy && patch.privacy === (await store.getSettings()).youtubePrivacy) delete patch.privacy;
     if (patch.status) {
       const current = await store.getClip(id);
       if (!current) throw new HttpError(404, "Not found");
@@ -44,7 +52,7 @@ export async function PATCH(req: Request, ctx: RouteContext<"/api/clips/[id]">) 
     if (!clip) throw new HttpError(404, "Not found");
 
     if (patch.status === "scheduled") {
-      await queueApprovedUploads();
+      await queueApprovedUploads(ws);
     } else if (patch.status) {
       await store.cancelQueuedJobs(id, "upload"); // un-approved / skipped → don't upload
     }

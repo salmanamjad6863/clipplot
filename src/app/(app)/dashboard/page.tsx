@@ -9,8 +9,9 @@ import { GameChip } from "@/components/game-chip";
 import { ReviewCard } from "@/components/clip-card";
 import { FilterBar, applyFilters, type FormatFilter } from "@/components/filter-bar";
 import { EmptyState, FormatBadge, PageHeader, Section, SkeletonGrid, StatusPill, ease } from "@/components/ui";
-import { formatDuration } from "@/lib/format";
+import { formatDuration, formatNumber } from "@/lib/format";
 import { useClips } from "@/lib/queries";
+import type { Clip } from "@/lib/types";
 
 const IN_PIPELINE = ["discovered", "scripting", "rendering"];
 
@@ -23,6 +24,8 @@ export default function Dashboard() {
   const filtered = applyFilters(all, game, format);
   const review = filtered.filter((c) => c.status === "awaiting_approval");
   const pipeline = filtered.filter((c) => [...IN_PIPELINE, "scheduled", "failed"].includes(c.status));
+
+  const { week, weekViews, best, avgPct } = lastWeek(all);
 
   const stats = [
     { label: "Needs review", value: all.filter((c) => c.status === "awaiting_approval").length, accent: true },
@@ -58,6 +61,30 @@ export default function Dashboard() {
           </motion.div>
         ))}
       </div>
+
+      {week.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.2, ease }}
+          className="glass mt-3 flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl px-4 py-3 text-sm"
+        >
+          <span className="text-xs uppercase tracking-wider text-muted">Last 7 days</span>
+          <span>
+            <b className="font-display text-lg">{formatNumber(weekViews)}</b> <span className="text-muted">views</span>
+          </span>
+          {avgPct !== null && (
+            <span>
+              <b className="font-display text-lg">{Math.round(avgPct)}%</b> <span className="text-muted">avg watched</span>
+            </span>
+          )}
+          {best && (
+            <Link href={`/review/${best.id}`} className="min-w-0 flex-1 truncate text-muted hover:text-fg">
+              Top: <span className="text-fg">{best.title}</span> · {formatNumber(best.views ?? 0)} views
+            </Link>
+          )}
+        </motion.div>
+      )}
 
       <div className="mt-8">
         <FilterBar id="dash" game={game} onGame={setGame} format={format} onFormat={setFormat} />
@@ -136,4 +163,18 @@ export default function Dashboard() {
       </Section>
     </>
   );
+}
+
+/** Published in the last 7 days with stats. Clips only exist client-side (after hydration), so reading the clock here is safe. */
+function lastWeek(all: Clip[]) {
+  if (all.length === 0) return { week: [] as Clip[], weekViews: 0, best: undefined, avgPct: null };
+  const now = Date.now();
+  const week = all.filter((c) => c.status === "published" && c.publishedAt && now - Date.parse(c.publishedAt) < 7 * 86_400_000 && c.views !== undefined);
+  const withPct = week.filter((c) => c.avgViewPct !== undefined);
+  return {
+    week,
+    weekViews: week.reduce((n, c) => n + (c.views ?? 0), 0),
+    best: [...week].sort((a, b) => (b.views ?? 0) - (a.views ?? 0))[0],
+    avgPct: withPct.length ? withPct.reduce((n, c) => n + c.avgViewPct!, 0) / withPct.length : null,
+  };
 }

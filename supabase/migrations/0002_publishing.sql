@@ -9,6 +9,12 @@ do $$ begin
     check (youtube_privacy in ('private', 'unlisted', 'public'));
 exception when duplicate_object then null; end $$;
 
+-- how the worker builds videos (Settings → Video & copyright)
+alter table settings add column if not exists render jsonb not null default '{
+  "footageMode": "auto", "maxCutSec": 3, "keepFootageAudio": false, "footageVolume": 15,
+  "voice": "Samantha", "voiceRate": 185, "captionWords": 3, "brandText": "ClipPilot"
+}'::jsonb;
+
 -- scheduler bookkeeping: when the daily discovery / upload release last ran
 alter table settings add column if not exists last_discovery_at timestamptz;
 alter table settings add column if not exists last_release_at timestamptz;

@@ -11,10 +11,11 @@
     "db:check": "node --env-file=.env.local scripts/db-check.mjs",
     "db:seed": "node --no-warnings --env-file=.env.local scripts/db-seed.ts",
     "test:discovery": "tsx scripts/discovery-check.mts",
-    "test": "pnpm test:dedupe && pnpm test:discovery && pnpm test:upload && pnpm test:schedule",
+    "test": "pnpm test:dedupe && pnpm test:discovery && pnpm test:upload && pnpm test:schedule && pnpm test:topics",
     "worker": "node --no-warnings --env-file=.env.local --import tsx worker/index.mts",
     "test:upload": "tsx scripts/upload-check.mts",
-    "test:schedule": "tsx scripts/schedule-check.mts"
+    "test:schedule": "tsx scripts/schedule-check.mts",
+    "test:topics": "tsx scripts/topics-check.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.7.0",

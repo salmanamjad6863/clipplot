@@ -1,6 +1,6 @@
 "use client";
 
-import { GAMES } from "@/lib/games";
+import { useTopics } from "@/lib/queries";
 import type { VideoFormat } from "@/lib/types";
 import { Segmented } from "./ui";
 
@@ -19,6 +19,7 @@ export function FilterBar({
   onFormat: (v: FormatFilter) => void;
   id: string;
 }) {
+  const topics = useTopics();
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Segmented
@@ -37,8 +38,8 @@ export function FilterBar({
         aria-label="Filter by game"
         className="glass cursor-pointer rounded-full px-3 py-2 text-xs text-fg outline-none"
       >
-        <option value="all" className="bg-bg-elev">All games</option>
-        {GAMES.map((g) => (
+        <option value="all" className="bg-bg-elev">All topics</option>
+        {topics.map((g) => (
           <option key={g.slug} value={g.slug} className="bg-bg-elev">
             {g.name}
           </option>

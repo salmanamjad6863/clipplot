@@ -88,3 +88,16 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- legal pages (privacy / terms / contact) ---------- */
+.legal h1 { font-family: var(--font-sora); font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; margin-top: 1.5rem; }
+.legal h2 { font-family: var(--font-sora); font-size: 1.15rem; font-weight: 600; margin-top: 2.25rem; margin-bottom: 0.5rem; }
+.legal h3 { font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.25rem; }
+.legal p, .legal li { color: rgb(244 243 248 / 0.82); line-height: 1.75; font-size: 0.95rem; }
+.legal p { margin-top: 0.6rem; }
+.legal ul { list-style: disc; padding-left: 1.25rem; margin-top: 0.5rem; }
+.legal li { margin-top: 0.3rem; }
+.legal a { color: var(--coral); text-decoration: underline; text-underline-offset: 3px; }
+.legal a:hover { color: var(--amber); }
+.legal .meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
+.legal .note { border: 1px solid var(--border); background: var(--surface); border-radius: 1rem; padding: 1rem 1.25rem; margin-top: 1.25rem; }

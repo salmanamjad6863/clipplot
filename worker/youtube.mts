@@ -111,3 +111,14 @@ export async function uploadToYouTube(
     await fh.close();
   }
 }
+
+/** Custom thumbnail (needs a phone-verified channel; otherwise YouTube refuses — non-fatal). */
+export async function setThumbnail(videoId: string, jpg: Buffer, accessToken: string): Promise<string | null> {
+  const res = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${videoId}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "image/jpeg" },
+    body: new Uint8Array(jpg),
+  });
+  if (res.ok) return null;
+  return errorText(res);
+}

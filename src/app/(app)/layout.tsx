@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { Logo } from "@/components/logo";
 import { MobileNav, Sidebar } from "@/components/sidebar";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 
 export default function AppLayout({ children }: LayoutProps<"/">) {
   return (
@@ -10,8 +11,11 @@ export default function AppLayout({ children }: LayoutProps<"/">) {
         <Sidebar />
       </Suspense>
       <div className="min-w-0 flex-1">
-        <div className="px-4 pt-5 lg:hidden">
+        <div className="flex items-center justify-between gap-3 px-4 pt-5 lg:hidden">
           <Logo />
+          <div className="w-44">
+            <WorkspaceSwitcher compact />
+          </div>
         </div>
         <main className="mx-auto w-full max-w-6xl px-4 pb-28 pt-6 sm:px-8 lg:pb-16 lg:pt-10">{children}</main>
       </div>

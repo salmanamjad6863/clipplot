@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { HttpError } from "../api";
-import { GAMES_BY_SLUG } from "../games";
+import type { Topic } from "../topics";
 import type { Clip, Trend } from "../types";
 
 /**
@@ -17,17 +17,20 @@ export const MODEL = "claude-opus-5-5";
 const Segment = z.object({
   startSec: z.number(),
   voiceover: z.string().describe("Spoken line, our own words"),
-  onScreenText: z.string().describe("≤6 words or empty"),
+  onScreenText: z.string().describe("≤4 words, a punchy claim, or empty"),
   visual: z.string().describe("Rights-safe footage: own gameplay, official trailer excerpt, or graphics"),
+  emphasis: z.array(z.string()).describe("1–2 key words copied exactly from this voiceover to highlight (numbers, names, shock words)"),
 });
 
 export const ScriptSchema = z.object({
-  hook: z.string().describe("≤12 words"),
-  title: z.string().describe("≤70 chars, includes game name"),
-  description: z.string().describe("2–3 short lines, no hashtags"),
+  hook: z.string().describe("The first spoken line, ≤8 words"),
+  title: z.string().describe("Shorts ≤50 chars / full video ≤70; game name in the first 3 words"),
+  titleAlternatives: z.array(z.string()).describe("2 other honest title angles for A/B testing"),
+  description: z.string().describe("Line 1 = keyword-rich one-sentence summary; then 1–2 short lines. No hashtags"),
   tags: z.array(z.string()).describe("8–12 tags, no #"),
   thumbnailText: z.string().describe("2–4 words"),
   angle: z.string().describe("One sentence: our original value-add"),
+  pinnedComment: z.string().describe("A specific question for the pinned comment that invites opinions/predictions"),
   segments: z.array(Segment),
   riskScore: z.number().describe("0–100, 0 = safe"),
   riskNotes: z.string().describe("One sentence"),
@@ -35,22 +38,49 @@ export const ScriptSchema = z.object({
 
 export type ScriptResult = z.infer<typeof ScriptSchema> & { sources: { title: string; channel: string; url: string }[] };
 
-const SYSTEM = `You write scripts for a YouTube gaming channel (mainly GTA 6). Rules:
-- Trend videos are inspiration only. We never reuse other creators' footage; we add our own commentary over our gameplay, short official trailer excerpts, or graphics.
-- You only know the titles/stats given. Present leaks and datamines as rumors. Never invent numbers, dates or quotes.
-- Curiosity without lies: no ALL CAPS, no fake "official".
-- Spoken style, short sentences, no emojis. ~2.5 words per second.
-- Risk score rises for: reliance on one creator's footage, leaked material, unverified claims, ad-unfriendly content.
+// Kept stable (no dates/ids) so it can be prompt-cached later. Rules = widely observed YouTube retention practice.
+const SYSTEM = `You write scripts for a YouTube gaming channel (mainly GTA 6). Goal: maximum watch-through, replays and comments.
+
+Integrity
+- Trend videos are inspiration only. We never reuse other creators' footage; our own commentary over our gameplay, short official trailer excerpts, or graphics.
+- You only know the titles/stats given. Present leaks/datamines as rumors. Never invent numbers, dates or quotes. No ALL CAPS, no fake "official", no clickbait the video doesn't pay off.
+
+Shorts (9:16)
+- Beat 1 is the hook, ≤8 words, spoken in under 2 seconds, over the most striking visual. Open a curiosity gap or make a bold, true claim. Never "Hey guys", "In this video", or a slow intro.
+- 20–40 seconds total. Beats of 2–5 seconds; every beat adds something new (a reveal, a number, a contrast). Cut filler words.
+- Save the payoff for the last third. The final line must flow naturally back into the hook so the loop replays seamlessly.
+- End with a pointed question that sparks comments (an opinion or prediction), not "like and subscribe".
+- onScreenText: a ≤4-word claim per beat, not a copy of the voiceover.
+
+Full videos (16:9)
+- First 15 seconds: say exactly what the viewer gets and tease the best item. Ranked countdown, best last. A re-hook roughly every 60 seconds ("but number 1 changes everything"). Close by teasing a related topic.
+
+Style: spoken, short sentences, no emojis, ~2.5 words/second.
+Risk score rises for: reliance on one creator's footage, leaked material, unverified claims, ad-unfriendly content.
 Be concise.`;
 
-function userPrompt(clip: Clip, trends: Trend[]) {
-  const game = GAMES_BY_SLUG[clip.game]?.name ?? clip.game;
+export interface ScriptContext {
+  /** One-off direction from you (Regenerate with a note) */
+  note?: string;
+  /** "What worked on this channel" summary */
+  learnings?: string;
+  topic?: Topic;
+  /** Channel-wide direction (Settings → Topics → Channel style) */
+  persona?: string;
+}
+
+function userPrompt(clip: Clip, trends: Trend[], ctx: ScriptContext) {
+  const { note, learnings, topic, persona } = ctx;
+  const game = topic?.name ?? clip.game;
   const kind =
     clip.format === "short"
       ? `Short, 9:16, ~${clip.durationSec}s, 5–8 beats`
       : `full video, 16:9, ~${Math.round(clip.durationSec / 60)} min, ranked breakdown with intro + outro, 10–14 beats`;
   const list = trends.map((t, i) => `${i + 1}. ${t.title} (${t.channel}, ${Math.round(t.viewsPerHour / 1000)}k views/h)`).join("\n");
-  return `${game} — ${kind}${clip.isFallback ? " (fallback game today)" : ""}.\nTrending titles:\n${list}`;
+  const style = [persona && `Channel style: ${persona}`, topic?.notes && `Topic notes: ${topic.notes}`].filter(Boolean).join("\n");
+  const direction = (style ? `\n${style}` : "") + (note ? `\nDirection for this video (follow it within the rules): ${note}` : "");
+  const learned = learnings ? `\n\n${learnings}` : "";
+  return `${game} — ${kind}${clip.isFallback ? " (fallback game today)" : ""}.\nTrending titles:\n${list}${direction}${learned}`;
 }
 
 /** Typed SDK errors → short messages the dashboard can show */
@@ -77,7 +107,7 @@ function getClient() {
   return client;
 }
 
-export async function generateScript(clip: Clip, trends: Trend[]): Promise<ScriptResult> {
+export async function generateScript(clip: Clip, trends: Trend[], ctx: ScriptContext = {}): Promise<ScriptResult> {
   if (trends.length === 0) throw new HttpError(400, "Clip has no trend sources to write from");
 
   let res;
@@ -90,7 +120,7 @@ export async function generateScript(clip: Clip, trends: Trend[]): Promise<Scrip
       fallbacks: "default", // a safety-classifier decline is retried on a fallback model in the same call
       output_config: { effort: "low", format: betaZodOutputFormat(ScriptSchema) },
       system: SYSTEM,
-      messages: [{ role: "user", content: userPrompt(clip, trends) }],
+      messages: [{ role: "user", content: userPrompt(clip, trends, ctx) }],
     });
   } catch (err) {
     throw friendlyError(err);
@@ -108,18 +138,24 @@ export async function generateScript(clip: Clip, trends: Trend[]): Promise<Scrip
   const sources = trends.map((t) => ({ title: t.title, channel: t.channel, url: t.url }));
 
   // Normalize: limits YouTube enforces, plus the game's hashtags
-  const game = GAMES_BY_SLUG[clip.game];
+  const game = ctx.topic;
   return {
     ...out,
     sources,
     title: out.title.slice(0, 100),
+    titleAlternatives: out.titleAlternatives.slice(0, 2).map((t) => t.slice(0, 100)),
+    // keep only emphasis words that really appear in the line (the worker highlights them)
+    segments: out.segments.map((seg) => ({
+      ...seg,
+      emphasis: seg.emphasis.filter((w) => seg.voiceover.toLowerCase().includes(w.toLowerCase())).slice(0, 2),
+    })),
     tags: [...new Set(out.tags.map((t) => t.replace(/^#/, "").trim()).filter(Boolean))].slice(0, 12),
     riskScore: Math.max(0, Math.min(100, Math.round(out.riskScore))),
     description: [
       out.description.trim(),
       "",
       `Inspired by: ${sources.map((s) => `${s.channel} (${s.url})`).join(", ")}`,
-      game ? game.hashtags.join(" ") : "",
+      game ? game.hashtags.slice(0, 3).join(" ") : "",
     ]
       .filter((l, i, a) => l !== "" || a[i - 1] !== "")
       .join("\n")

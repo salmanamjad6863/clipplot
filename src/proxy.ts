@@ -29,5 +29,6 @@ export const config = {
     "/api/settings/:path*",
     "/api/discover/:path*",
     "/api/youtube/:path*",
+    "/api/workspaces/:path*",
   ],
 };

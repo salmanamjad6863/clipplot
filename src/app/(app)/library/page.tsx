@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useState } from "react";
 import { motion } from "motion/react";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Eye, MessageCircle, ThumbsUp } from "lucide-react";
+import clsx from "clsx";
 import { GameChip } from "@/components/game-chip";
 import { FilterBar, applyFilters, type FormatFilter } from "@/components/filter-bar";
 import { EmptyState, FormatBadge, PageHeader, Segmented, SkeletonGrid, StatusPill, ease } from "@/components/ui";
-import { formatDuration, timeAgo } from "@/lib/format";
+import { formatDuration, formatNumber, timeAgo } from "@/lib/format";
+import type { Clip } from "@/lib/types";
 import { useClips } from "@/lib/queries";
 
 type Tab = "published" | "scheduled" | "rejected";
@@ -60,6 +62,7 @@ export default function LibraryPage() {
                 <GameChip slug={c.game} fallback={c.isFallback} />
                 <FormatBadge format={c.format} />
                 <span className="w-10 text-right font-mono text-xs text-muted">{formatDuration(c.durationSec)}</span>
+                {c.status === "published" && <Perf clip={c} />}
                 <span className="w-24 text-right text-xs text-muted">
                   {timeAgo(c.publishedAt ?? c.scheduledFor ?? c.createdAt)}
                 </span>
@@ -76,5 +79,30 @@ export default function LibraryPage() {
         )}
       </div>
     </>
+  );
+}
+
+/** Views · likes · comments · % watched (refreshed every 6h; % watched needs the Analytics permission) */
+function Perf({ clip }: { clip: Clip }) {
+  if (clip.views === undefined) {
+    return <span className="w-44 text-right text-[11px] text-muted">stats soon</span>;
+  }
+  return (
+    <span className="flex w-44 items-center justify-end gap-2.5 font-mono text-[11px] text-muted" title={clip.statsAt ? `Updated ${timeAgo(clip.statsAt)}` : undefined}>
+      <span className="inline-flex items-center gap-1 text-fg/90">
+        <Eye className="h-3 w-3" /> {formatNumber(clip.views)}
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <ThumbsUp className="h-3 w-3" /> {formatNumber(clip.likes ?? 0)}
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <MessageCircle className="h-3 w-3" /> {formatNumber(clip.comments ?? 0)}
+      </span>
+      {clip.avgViewPct !== undefined && (
+        <span className={clsx(clip.avgViewPct >= 70 ? "text-success" : clip.avgViewPct >= 45 ? "text-amber" : "text-danger")}>
+          {Math.round(clip.avgViewPct)}%
+        </span>
+      )}
+    </span>
   );
 }

@@ -15,6 +15,8 @@ export interface VideoMeta {
   durationSec: number;
   /** Live, upcoming or a past livestream recording — poor clip sources */
   isLive: boolean;
+  /** Subscribers of the uploading channel (0 = hidden/unknown) — used for the breakout score */
+  channelSubscribers: number;
 }
 
 export class YouTubeError extends Error {
@@ -50,38 +52,33 @@ export function parseDuration(iso: string): number {
   return d * 86_400 + h * 3600 + min * 60 + s;
 }
 
-/** Search recent videos for a game, then fetch stats for them. ≈101 quota units. */
-export async function searchRecentVideos(
-  queries: string[],
-  opts: { apiKey: string; publishedAfter: Date; maxResults?: number },
-): Promise<VideoMeta[]> {
-  const search = await get<{ items?: { id?: { videoId?: string } }[] }>(
-    "search",
-    {
-      part: "id",
-      type: "video",
-      q: queries.join("|"),
-      order: "viewCount",
-      publishedAfter: opts.publishedAfter.toISOString(),
-      maxResults: String(opts.maxResults ?? 25),
-      safeSearch: "moderate",
-    },
-    opts.apiKey,
-  );
-  const ids = [...new Set((search.items ?? []).map((i) => i.id?.videoId).filter((x): x is string => !!x))];
+/** Video details + channel sizes for a list of video IDs (1 + 1 quota units per 50 videos). */
+export async function videosByIds(ids: string[], apiKey: string): Promise<VideoMeta[]> {
   if (ids.length === 0) return [];
-
   const videos = await get<{
     items?: {
       id: string;
-      snippet: { title: string; channelTitle: string; publishedAt: string; liveBroadcastContent?: string };
+      snippet: { title: string; channelTitle: string; channelId: string; publishedAt: string; liveBroadcastContent?: string };
       statistics?: { viewCount?: string };
       contentDetails?: { duration?: string };
       liveStreamingDetails?: object;
     }[];
-  }>("videos", { part: "snippet,statistics,contentDetails,liveStreamingDetails", id: ids.join(","), maxResults: "50" }, opts.apiKey);
+  }>("videos", { part: "snippet,statistics,contentDetails,liveStreamingDetails", id: ids.slice(0, 50).join(","), maxResults: "50" }, apiKey);
+  const items = videos.items ?? [];
 
-  return (videos.items ?? []).map((v) => ({
+  // channel sizes → "breakout" = views far above what the channel normally gets
+  const channelIds = [...new Set(items.map((v) => v.snippet.channelId))];
+  const subs = new Map<string, number>();
+  if (channelIds.length) {
+    const ch = await get<{ items?: { id: string; statistics?: { subscriberCount?: string; hiddenSubscriberCount?: boolean } }[] }>(
+      "channels",
+      { part: "statistics", id: channelIds.join(","), maxResults: "50" },
+      apiKey,
+    ).catch(() => ({ items: [] }));
+    for (const c of ch.items ?? []) subs.set(c.id, c.statistics?.hiddenSubscriberCount ? 0 : Number(c.statistics?.subscriberCount ?? 0));
+  }
+
+  return items.map((v) => ({
     videoId: v.id,
     title: v.snippet.title,
     channel: v.snippet.channelTitle,
@@ -89,5 +86,28 @@ export async function searchRecentVideos(
     views: Number(v.statistics?.viewCount ?? 0),
     durationSec: parseDuration(v.contentDetails?.duration ?? ""),
     isLive: Boolean(v.liveStreamingDetails) || (v.snippet.liveBroadcastContent ?? "none") !== "none",
+    channelSubscribers: subs.get(v.snippet.channelId) ?? 0,
   }));
+}
+
+/** Search recent videos (by view count) and fetch their stats + channel sizes. ≈102 quota units. */
+export async function searchRecentVideos(
+  queries: string[],
+  opts: { apiKey: string; publishedAfter: Date; maxResults?: number; order?: "viewCount" | "relevance" | "date" },
+): Promise<VideoMeta[]> {
+  const search = await get<{ items?: { id?: { videoId?: string } }[] }>(
+    "search",
+    {
+      part: "id",
+      type: "video",
+      q: queries.join("|"),
+      order: opts.order ?? "viewCount",
+      publishedAfter: opts.publishedAfter.toISOString(),
+      maxResults: String(opts.maxResults ?? 25),
+      safeSearch: "moderate",
+    },
+    opts.apiKey,
+  );
+  const ids = [...new Set((search.items ?? []).map((i) => i.id?.videoId).filter((x): x is string => !!x))];
+  return videosByIds(ids, opts.apiKey);
 }

@@ -6,6 +6,7 @@ import { motion } from "motion/react";
 import clsx from "clsx";
 import { Inbox, LayoutDashboard, Library, LogOut, Radar, Settings, SquarePlay } from "lucide-react";
 import { Logo } from "./logo";
+import { WorkspaceSwitcher } from "./workspace-switcher";
 import { useClips, useSettings } from "@/lib/queries";
 
 const NAV = [
@@ -31,7 +32,10 @@ export function Sidebar() {
       <div className="px-2">
         <Logo />
       </div>
-      <nav className="mt-10 flex flex-col gap-1">
+      <div className="mt-6">
+        <WorkspaceSwitcher />
+      </div>
+      <nav className="mt-6 flex flex-col gap-1">
         {NAV.map((item) => {
           const active = pathname.startsWith(item.href);
           return (
@@ -73,7 +77,9 @@ export function Sidebar() {
             )}
           />
         </div>
-        <p className="mt-1 text-muted">{settings?.youtubeConnected ? "Channel connected" : "Not connected yet"}</p>
+        <p className="mt-1 truncate text-muted">
+          {settings?.youtubeConnected ? (settings.youtubeChannelTitle ?? "Channel connected") : "Not connected yet"}
+        </p>
         <p className="mt-2 text-muted">
           Autopilot: <span className={settings?.autopilot ? "text-success" : "text-fg/70"}>{settings?.autopilot ? "On" : "Off"}</span>
         </p>

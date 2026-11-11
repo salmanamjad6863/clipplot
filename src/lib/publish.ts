@@ -7,8 +7,8 @@ import { getStore } from "./data";
  * - Autopilot ON → uploads wait for the daily upload slot (cron, Step 7).
  * - Autopilot OFF → approving uploads right away (the worker picks it up within ~30s).
  */
-export async function queueApprovedUploads(opts: { ignoreAutopilot?: boolean } = {}) {
-  const store = getStore();
+export async function queueApprovedUploads(ws: string, opts: { ignoreAutopilot?: boolean } = {}) {
+  const store = getStore(ws);
   const settings = await store.getSettings();
   if (!settings.youtubeConnected) return { queued: 0, reason: "youtube_not_connected" as const };
   if (settings.autopilot && !opts.ignoreAutopilot) return { queued: 0, reason: "waiting_for_slot" as const };

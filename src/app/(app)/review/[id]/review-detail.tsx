@@ -8,9 +8,8 @@ import { ApproveSkip, Thumb } from "@/components/clip-card";
 import { GameChip } from "@/components/game-chip";
 import { ScriptPanel } from "@/components/script-panel";
 import { EmptyState, FormatBadge, StatusPill, ease, inputCls } from "@/components/ui";
-import { GAMES_BY_SLUG } from "@/lib/games";
 import { formatDuration } from "@/lib/format";
-import { useClip, useTrends, useUpdateClip } from "@/lib/queries";
+import { useClip, useTopicMap, useTrends, useUpdateClip } from "@/lib/queries";
 import { FORMAT_META, type Clip } from "@/lib/types";
 
 export function ReviewDetail({ id }: { id: string }) {
@@ -31,7 +30,7 @@ function Detail({ clip }: { clip: Clip }) {
   const [description, setDescription] = useState(clip.description);
   const [tags, setTags] = useState(clip.tags.join(", "));
 
-  const game = GAMES_BY_SLUG[clip.game];
+  const game = useTopicMap()[clip.game];
   const sources = trends?.filter((t) => clip.trendIds.includes(t.id)) ?? [];
   const dirty = title !== clip.title || description !== clip.description || tags !== clip.tags.join(", ");
   const reviewable = clip.status === "awaiting_approval";

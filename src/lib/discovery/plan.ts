@@ -26,6 +26,8 @@ export interface PlannedTrend {
   publishedAt: string;
   status: TrendStatus;
   duplicateReason?: string;
+  /** views ÷ uploader's subscribers (not stored; drives ranking + viral score) */
+  breakout?: number;
 }
 
 export interface PlannedClip {
@@ -75,11 +77,35 @@ export interface PlanInput {
   lastLongClipAt: string | null;
   /** Shorts already created today (so re-running doesn't double up) */
   shortsCreatedToday: number;
+  /** Manual "find more now": make at least this many Shorts even if today's quota is used */
+  extraShorts?: number;
+  /** Breaking-news mode: only trends at or above this viral score become clips */
+  minViralScore?: number;
 }
 
-/** 5k/h ≈ 74, 50k/h ≈ 94, 100k/h = 100 */
-export function viralScore(viewsPerHour: number) {
-  return Math.max(0, Math.min(100, Math.round(20 * Math.log10(Math.max(1, viewsPerHour)))));
+/**
+ * Breakout = views ÷ the uploader's subscribers. A small channel getting 10× its size in views means the
+ * TOPIC is hot (what we want to ride), not just that a big channel posted. Unknown size → neutral (1).
+ */
+export function breakout(views: number, subscribers: number) {
+  if (!subscribers) return 1;
+  return Math.max(0.1, Math.min(100, views / Math.max(subscribers, 1000)));
+}
+
+/** Ranking: speed (log views/hour) + a bonus for breaking out of the channel's usual reach. */
+export function trendRank(viewsPerHour: number, breakoutRatio = 1) {
+  return Math.log10(Math.max(1, viewsPerHour)) + 0.6 * Math.log10(breakoutRatio);
+}
+
+/** 0–100 for the dashboard. 5k/h ≈ 74, 50k/h ≈ 94; a 10× breakout adds ~12. */
+export function viralScore(viewsPerHour: number, breakoutRatio = 1) {
+  return Math.max(0, Math.min(100, Math.round(20 * trendRank(viewsPerHour, breakoutRatio))));
+}
+
+/** Target Short length: middle of the configured range, capped at 40s (retention sweet spot) */
+export function shortTarget(settings: Settings) {
+  const { minSec, maxSec } = settings.formats.short;
+  return Math.max(minSec, Math.min(40, Math.round((minSec + maxSec) / 2)));
 }
 
 const yt = (id: string) => `https://www.youtube.com/watch?v=${id}`;
@@ -88,7 +114,7 @@ const KEEP_PER_GAME = 12; // trends stored per game per run (for the radar)
 export async function planDiscovery(input: PlanInput): Promise<DiscoveryPlan> {
   const { settings, now } = input;
   const shortsWanted = settings.formats.short.enabled
-    ? Math.max(0, settings.formats.short.perDay - input.shortsCreatedToday)
+    ? Math.max(settings.formats.short.perDay - input.shortsCreatedToday, input.extraShorts ?? 0, 0)
     : 0;
 
   const trends: PlannedTrend[] = [];
@@ -121,9 +147,11 @@ export async function planDiscovery(input: PlanInput): Promise<DiscoveryPlan> {
       .filter((v) => !existing.has(v.videoId)) // seen before → silently skip, already on the radar
       .map((v) => {
         const hours = Math.max(1, (now - Date.parse(v.publishedAt)) / 3_600_000);
-        return { ...v, viewsPerHour: Math.round(v.views / hours) };
+        const viewsPerHour = Math.round(v.views / hours);
+        const bo = breakout(v.views, v.channelSubscribers);
+        return { ...v, viewsPerHour, breakout: bo, rank: trendRank(viewsPerHour, bo) };
       })
-      .sort((a, b) => b.viewsPerHour - a.viewsPerHour)
+      .sort((a, b) => b.rank - a.rank)
       .slice(0, KEEP_PER_GAME);
     entry.duplicates += videos.length - videos.filter((v) => !existing.has(v.videoId)).length;
 
@@ -139,6 +167,7 @@ export async function planDiscovery(input: PlanInput): Promise<DiscoveryPlan> {
         viewsPerHour: v.viewsPerHour,
         durationSec: v.durationSec,
         publishedAt: v.publishedAt,
+        breakout: v.breakout,
       };
       const dup = checkDuplicate(v, used, {
         windowDays: settings.dedupeWindowDays,
@@ -175,18 +204,20 @@ export async function planDiscovery(input: PlanInput): Promise<DiscoveryPlan> {
 
     for (const t of picksForGame) {
       if (clips.length >= shortsWanted) break;
+      if (input.minViralScore && viralScore(t.viewsPerHour, t.breakout) < input.minViralScore) continue; // not exceptional enough
       t.status = "used";
       entry.picked++;
       clips.push({
         game: game.slug,
         isFallback: depth > 0,
         format: "short",
-        durationSec: settings.formats.short.maxSec,
+        // aim mid-range: shorter Shorts keep a higher % watched (a key Shorts signal)
+        durationSec: shortTarget(settings),
         title: t.title,
         newTrendVideoIds: [t.videoId],
         existingTrendIds: [],
         trendUrl: t.url,
-        viralScore: viralScore(t.viewsPerHour),
+        viralScore: viralScore(t.viewsPerHour, t.breakout),
       });
     }
     if (picksForGame.length > 0 && !pickedGame) {

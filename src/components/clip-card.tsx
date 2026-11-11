@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback, useState } from "react";
 import { motion } from "motion/react";
 import clsx from "clsx";
 import { Check, Flame, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmDialog } from "./confirm-dialog";
 import { GameChip } from "./game-chip";
-import { FormatBadge, StatusPill, ease } from "./ui";
+import { FormatBadge, Segmented, StatusPill, ease } from "./ui";
 import { formatDuration } from "@/lib/format";
-import { useUpdateClip } from "@/lib/queries";
-import { FORMAT_META, type Clip } from "@/lib/types";
+import { useSettings, useTopicMap, useUpdateClip } from "@/lib/queries";
+import { FORMAT_META, type Clip, type Privacy } from "@/lib/types";
 
 export function Thumb({ clip, className }: { clip: Clip; className?: string }) {
   return (
@@ -41,11 +43,18 @@ export function Thumb({ clip, className }: { clip: Clip; className?: string }) {
 
 export function ApproveSkip({ clip, size = "sm" }: { clip: Clip; size?: "sm" | "md" }) {
   const update = useUpdateClip();
+  const { data: settings } = useSettings();
+  const [confirm, setConfirm] = useState<"scheduled" | "rejected" | null>(null);
+  const topic = useTopicMap()[clip.game];
+  const [picked, setPrivacy] = useState<Privacy | null>(null);
+  const privacy: Privacy = picked ?? clip.privacy ?? settings?.youtubePrivacy ?? "private";
   const pad = size === "md" ? "px-5 py-2 text-sm" : "px-4 py-1.5 text-xs";
+  const close = useCallback(() => setConfirm(null), []);
 
   const act = (status: "scheduled" | "rejected") => {
-    update.mutate({ id: clip.id, patch: { status } });
-    toast(status === "scheduled" ? "Approved — queued for upload" : "Skipped", {
+    setConfirm(null);
+    update.mutate({ id: clip.id, patch: status === "scheduled" ? { status, privacy } : { status } });
+    toast(status === "scheduled" ? "Approved" : "Skipped", {
       description: clip.title,
       action: {
         label: "Undo",
@@ -54,10 +63,17 @@ export function ApproveSkip({ clip, size = "sm" }: { clip: Clip; size?: "sm" | "
     });
   };
 
+  // spell out exactly what Approve will do with the current settings
+  const approveWhat = !settings?.youtubeConnected
+    ? "YouTube isn't connected yet — it uploads as soon as you connect your channel in Settings."
+    : settings.autopilot
+      ? `It waits for the daily upload slot (${settings.uploadTime} UTC), then uploads as ${privacy}.`
+      : `It uploads to YouTube right away as ${privacy}.`;
+
   return (
     <div className="flex items-center gap-2">
       <button
-        onClick={() => act("scheduled")}
+        onClick={() => setConfirm("scheduled")}
         className={clsx(
           "inline-flex items-center gap-1.5 rounded-full bg-sunset font-medium text-bg transition-transform hover:scale-105 active:scale-95",
           pad,
@@ -66,11 +82,59 @@ export function ApproveSkip({ clip, size = "sm" }: { clip: Clip; size?: "sm" | "
         <Check className="h-3.5 w-3.5" /> Approve
       </button>
       <button
-        onClick={() => act("rejected")}
+        onClick={() => setConfirm("rejected")}
         className={clsx("inline-flex items-center gap-1.5 rounded-full bg-white/5 text-muted transition hover:bg-white/10 hover:text-fg", pad)}
       >
         <X className="h-3.5 w-3.5" /> Skip
       </button>
+
+      <ConfirmDialog
+        open={confirm === "scheduled"}
+        title="Approve this video?"
+        confirmLabel="Approve & publish"
+        onConfirm={() => act("scheduled")}
+        onCancel={close}
+      >
+        <p className="font-medium text-fg">“{clip.title}”</p>
+        <p>
+          {FORMAT_META[clip.format].label} · {formatDuration(clip.durationSec)} ·{" "}
+          {clip.format === "short" ? (topic?.playlistTitle ?? clip.game) : `${topic?.name ?? clip.game} — Full Videos`} playlist
+        </p>
+        <div>
+          <p className="mb-1.5 text-xs">Visibility for this video</p>
+          <Segmented
+            id={`privacy-${clip.id}`}
+            value={privacy}
+            onChange={setPrivacy}
+            options={[
+              { value: "private", label: "Private" },
+              { value: "unlisted", label: "Unlisted" },
+              { value: "public", label: "Public" },
+            ]}
+          />
+        </div>
+        <p>{approveWhat}</p>
+        {privacy !== "private" && (
+          <p className="text-[11px]">If your Google project hasn&apos;t passed YouTube&apos;s API audit yet, YouTube still forces Private.</p>
+        )}
+        {clip.riskScore >= 40 && (
+          <p className="flex items-start gap-1.5 text-warning">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" /> Policy risk {clip.riskScore}/100 — check the script notes first.
+          </p>
+        )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={confirm === "rejected"}
+        title="Skip this video?"
+        confirmLabel="Skip it"
+        tone="danger"
+        onConfirm={() => act("rejected")}
+        onCancel={close}
+      >
+        <p className="font-medium text-fg">“{clip.title}”</p>
+        <p>It won&apos;t be uploaded. You can still find it in Library → Skipped, and its trend won&apos;t be picked again.</p>
+      </ConfirmDialog>
     </div>
   );
 }

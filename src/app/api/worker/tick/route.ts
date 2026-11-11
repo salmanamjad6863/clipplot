@@ -9,8 +9,8 @@ export const maxDuration = 300;
 export async function POST(req: Request) {
   return handle("worker tick", async () => {
     requireWorker(req);
-    const { result, background } = await schedulerTick("worker");
+    const { results, background } = await schedulerTick("worker");
     if (background) after(background);
-    return result;
+    return results;
   });
 }

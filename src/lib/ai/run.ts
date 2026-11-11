@@ -1,14 +1,21 @@
 import "server-only";
 import { getStore } from "../data";
 import type { Clip } from "../types";
+import { buildLearnings } from "./learning";
 import { MODEL, generateScript } from "./script";
 
 /** Writes the script for one already-claimed clip (status = scripting). */
-export async function scriptClip(clip: Clip): Promise<Clip | null> {
-  const store = getStore();
+export async function scriptClip(clip: Clip, note?: string): Promise<Clip | null> {
+  const store = getStore(clip.workspaceId);
   try {
-    const trends = await store.getTrendsByIds(clip.trendIds);
-    const r = await generateScript(clip, trends);
+    const [trends, all, settings] = await Promise.all([store.getTrendsByIds(clip.trendIds), store.listClips(), store.getSettings()]);
+    const r = await generateScript(clip, trends, {
+      note,
+      // feed this channel's own results back in (empty until there are ≥4 videos with stats)
+      learnings: buildLearnings(all, Date.now(), clip.format),
+      topic: settings.topics.find((t) => t.slug === clip.game),
+      persona: settings.channelPersona || undefined,
+    });
     const saved = await store.saveScript(clip.id, {
       hook: r.hook,
       title: r.title,
@@ -21,6 +28,8 @@ export async function scriptClip(clip: Clip): Promise<Clip | null> {
         segments: r.segments,
         sources: r.sources,
         riskNotes: r.riskNotes,
+        pinnedComment: r.pinnedComment,
+        titleAlternatives: r.titleAlternatives,
         model: MODEL,
         generatedAt: new Date().toISOString(),
       },
@@ -36,8 +45,8 @@ export async function scriptClip(clip: Clip): Promise<Clip | null> {
 }
 
 /** Scripts clips waiting in `discovered` one at a time (gentle on free-tier rate limits). */
-export async function scriptPending(limit = 3) {
-  const clips = await getStore().claimForScripting(limit);
+export async function scriptPending(ws: string, limit = 3) {
+  const clips = await getStore(ws).claimForScripting(limit);
   let ok = 0;
   for (const c of clips) {
     try {

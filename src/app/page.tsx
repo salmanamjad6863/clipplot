@@ -4,6 +4,7 @@ import Link from "next/link";
 import { motion } from "motion/react";
 import { ArrowRight, CalendarClock, CheckCircle2, Clapperboard, Radar, Sparkles, Upload } from "lucide-react";
 import { Logo } from "@/components/logo";
+import { SiteFooter } from "@/components/site-footer";
 
 const ease = [0.22, 1, 0.36, 1] as const;
 
@@ -104,6 +105,7 @@ export default function Home() {
           ))}
         </div>
       </section>
+      <SiteFooter />
     </main>
   );
 }

@@ -1,15 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Reorder, motion, useDragControls } from "motion/react";
+import { useCallback, useEffect, useState } from "react";
+import { motion } from "motion/react";
 import clsx from "clsx";
-import { Clapperboard, Copy, GripVertical, Radar, Save, Smartphone, Timer, SquarePlay } from "lucide-react";
+import { Clapperboard, Copy, Film, Radar, Save, Smartphone, Timer, SquarePlay } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { TopicsManager } from "@/components/topics-manager";
 import { PageHeader, Segmented, Toggle, ease, inputCls } from "@/components/ui";
-import { GAMES_BY_SLUG } from "@/lib/games";
 import { DISCOVERY_LEAD_HOURS } from "@/lib/schedule-time";
-import { useDisconnectYouTube, useSaveSettings, useSettings } from "@/lib/queries";
-import type { Settings } from "@/lib/types";
+import {
+  useDeleteWorkspace,
+  useDisconnectYouTube,
+  useRenameWorkspace,
+  useSaveSettings,
+  useSettings,
+  useWorkspaces,
+} from "@/lib/queries";
+import { VOICES, type RenderSettings, type Settings } from "@/lib/types";
 
 export default function SettingsPage() {
   const { data, isLoading } = useSettings();
@@ -26,6 +34,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS((p) => ({ ...p, [k]: v }));
   const setShort = (patch: Partial<Settings["formats"]["short"]>) =>
     setS((p) => ({ ...p, formats: { ...p.formats, short: { ...p.formats.short, ...patch } } }));
+  const setRender = (patch: Partial<RenderSettings>) => setS((p) => ({ ...p, render: { ...p.render, ...patch } }));
   const setLong = (patch: Partial<Settings["formats"]["long"]>) =>
     setS((p) => ({ ...p, formats: { ...p.formats, long: { ...p.formats.long, ...patch } } }));
 
@@ -48,29 +57,12 @@ function SettingsForm({ initial }: { initial: Settings }) {
       </PageHeader>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
-        {/* Games */}
-        <Card i={0} icon={Radar} title="Games & fallback order" className="lg:row-span-2">
-          <p className="text-sm text-muted">
-            Drag to reorder. The top game is tried first; if it has no strong trend, ClipPilot moves down the list
-            (max <b className="text-fg">{s.maxFallbackDepth}</b> games). Each game uploads to its own playlist.
-          </p>
-          <Reorder.Group axis="y" values={s.games} onReorder={(games) => set("games", games)} className="mt-4 space-y-2">
-            {s.games.map((g, idx) => (
-              <GameRow
-                key={g.slug}
-                item={g}
-                index={idx}
-                withinDepth={idx < s.maxFallbackDepth}
-                onToggle={(enabled) => {
-                  if (!enabled && s.games.filter((x) => x.enabled).length === 1) {
-                    toast.error("Keep at least one game enabled");
-                    return;
-                  }
-                  set("games", s.games.map((x) => (x.slug === g.slug ? { ...x, enabled } : x)));
-                }}
-              />
-            ))}
-          </Reorder.Group>
+        {/* Workspace */}
+        <WorkspaceCard />
+
+        {/* Topics */}
+        <Card i={0} icon={Radar} title="Topics (games & niches)" className="lg:row-span-2">
+          <TopicsManager s={s} setS={setS} />
         </Card>
 
         {/* Formats */}
@@ -84,7 +76,14 @@ function SettingsForm({ initial }: { initial: Settings }) {
           >
             <NumberField label="Min (sec)" value={s.formats.short.minSec} onChange={(minSec) => setShort({ minSec })} />
             <NumberField label="Max (sec)" value={s.formats.short.maxSec} max={180} onChange={(maxSec) => setShort({ maxSec })} />
-            <NumberField label="Per day" value={s.formats.short.perDay} max={6} onChange={(perDay) => setShort({ perDay })} />
+            {s.topicMode === "per_topic" ? (
+              <div className="text-xs text-muted">
+                <span className="text-xs">Per day</span>
+                <p className="mt-2.5 text-fg/80">set per topic</p>
+              </div>
+            ) : (
+              <NumberField label="Per day" value={s.formats.short.perDay} max={6} onChange={(perDay) => setShort({ perDay })} />
+            )}
           </FormatRow>
 
           <div className="my-5 h-px bg-border" />
@@ -116,7 +115,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
         {/* Dedupe + discovery */}
         <Card i={2} icon={Copy} title="Duplicate protection & discovery">
           <div className="grid grid-cols-2 gap-3">
-            <NumberField label="Don't repeat for (days)" value={s.dedupeWindowDays} max={90} onChange={(v) => set("dedupeWindowDays", v)} />
+            <NumberField label="Don't repeat for (days)" value={s.dedupeWindowDays} max={30} onChange={(v) => set("dedupeWindowDays", v)} />
             <NumberField label="Look back (hours)" value={s.lookbackHours} max={168} onChange={(v) => set("lookbackHours", v)} />
             <NumberField label="Min views / hour" value={s.minViewsPerHour} step={500} max={1_000_000} onChange={(v) => set("minViewsPerHour", v)} />
             <NumberField label="Fallback depth" value={s.maxFallbackDepth} max={s.games.length} onChange={(v) => set("maxFallbackDepth", v)} />
@@ -142,6 +141,11 @@ function SettingsForm({ initial }: { initial: Settings }) {
           </ul>
         </Card>
 
+        {/* Video & copyright */}
+        <Card i={4} icon={Film} title="Video & copyright" className="lg:col-span-2">
+          <VideoSettings r={s.render} set={setRender} />
+        </Card>
+
         {/* Publishing */}
         <Card i={3} icon={SquarePlay} title="Publishing">
           <div className="flex items-center justify-between gap-4">
@@ -151,12 +155,35 @@ function SettingsForm({ initial }: { initial: Settings }) {
             </div>
             <Toggle label="Autopilot" checked={s.autopilot} onChange={(v) => set("autopilot", v)} />
           </div>
-          <label className="mt-4 block">
-            <span className="text-xs text-muted">Daily upload time (UTC)</span>
-            <input type="time" value={s.uploadTime} onChange={(e) => set("uploadTime", e.target.value)} className={`${inputCls} mt-1.5 w-40`} />
-          </label>
+          <UploadTimes times={s.uploadTimes} onChange={(t) => setS((p) => ({ ...p, uploadTimes: t, uploadTime: [...t].sort()[0] }))} />
           <ScheduleStatus s={s} saved={initial} />
-          <YouTubeConnection connected={s.youtubeConnected} channelTitle={s.youtubeChannelTitle} />
+          <div className="mt-4 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">Breaking-news mode</p>
+              <p className="text-xs text-muted">
+                Extra GTA 6 checks during the day; only exceptional trends (viral score 90+) become extra Shorts, max 2/day.
+              </p>
+            </div>
+            <Toggle label="Breaking-news mode" checked={s.breakingNews} onChange={(v) => set("breakingNews", v)} />
+          </div>
+          {s.breakingNews && (
+            <label className="mt-2 flex items-center gap-2 text-xs text-muted">
+              Check every
+              <select
+                value={s.breakingEveryHours}
+                onChange={(e) => set("breakingEveryHours", Number(e.target.value))}
+                className="cursor-pointer rounded-lg border border-border bg-transparent px-2 py-1 text-fg outline-none"
+              >
+                {[2, 3, 4, 6].map((h) => (
+                  <option key={h} value={h} className="bg-bg-elev">
+                    {h} hours
+                  </option>
+                ))}
+              </select>
+              ≈ {Math.round((24 / s.breakingEveryHours) * 102)} quota units/day
+            </label>
+          )}
+          <YouTubeConnection connected={s.youtubeConnected} channelTitle={s.youtubeChannelTitle} scopes={s.youtubeScopes} />
           <div className="mt-4">
             <p className="text-xs text-muted">Upload visibility</p>
             <div className="mt-1.5">
@@ -182,15 +209,271 @@ function SettingsForm({ initial }: { initial: Settings }) {
   );
 }
 
+/** Rename / delete the current workspace (one per YouTube channel). */
+function WorkspaceCard() {
+  const { data } = useWorkspaces();
+  const rename = useRenameWorkspace();
+  const del = useDeleteWorkspace();
+  const current = data?.workspaces.find((w) => w.id === data.currentId);
+  const [name, setName] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const stopConfirming = useCallback(() => setConfirming(false), []);
+  if (!current) return null;
+  const value = name ?? current.name;
+  const only = (data?.workspaces.length ?? 0) <= 1;
+
+  return (
+    <motion.section
+      id="workspace"
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.55, ease }}
+      className="glass scroll-mt-24 rounded-2xl p-5 lg:col-span-2"
+    >
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="block min-w-48 flex-1">
+          <span className="text-xs text-muted">Workspace name</span>
+          <input value={value} maxLength={40} onChange={(e) => setName(e.target.value)} className={`${inputCls} mt-1.5`} />
+        </label>
+        <button
+          onClick={() => rename.mutate({ id: current.id, name: value.trim() }, { onSuccess: () => setName(null) })}
+          disabled={!value.trim() || value.trim() === current.name || rename.isPending}
+          className="rounded-full border border-border px-4 py-2 text-sm transition hover:bg-white/5 disabled:opacity-40"
+        >
+          Rename
+        </button>
+        <button
+          onClick={() => setConfirming(true)}
+          disabled={only}
+          title={only ? "You need at least one workspace" : undefined}
+          className="rounded-full px-4 py-2 text-sm text-danger transition hover:bg-danger/10 disabled:opacity-40"
+        >
+          Delete workspace
+        </button>
+      </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-muted">
+        Everything on this page belongs to <b className="text-fg/80">{current.name}</b>
+        {current.youtubeConnected ? ` (${current.channelTitle})` : ""}. Switch or add workspaces from the sidebar — one per YouTube
+        channel. All workspaces share your Google project&apos;s YouTube quota (10,000 units/day ≈ 6 uploads in total) and the
+        worker&apos;s footage folder.
+      </p>
+      <ConfirmDialog
+        open={confirming}
+        title={`Delete "${current.name}"?`}
+        confirmLabel={del.isPending ? "Deleting…" : "Delete forever"}
+        tone="danger"
+        busy={del.isPending}
+        onConfirm={() => del.mutate(current.id, { onSettled: stopConfirming })}
+        onCancel={stopConfirming}
+      >
+        <p>This permanently deletes its settings, trends, clips, review queue and previews, and disconnects its channel.</p>
+        <p>Videos already on YouTube stay there. This can&apos;t be undone.</p>
+      </ConfirmDialog>
+    </motion.section>
+  );
+}
+
+/** How the worker builds every video. Applied to the next render (re-render a clip to apply to it). */
+function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderSettings>) => void }) {
+  const voiceKnown = (VOICES as readonly string[]).includes(r.voice);
+  return (
+    <div className="grid gap-6 md:grid-cols-2">
+      <div className="space-y-4">
+        <div>
+          <p className="text-xs text-muted">Background footage</p>
+          <div className="mt-1.5">
+            <Segmented
+              id="footage-mode"
+              value={r.footageMode}
+              onChange={(v) => set({ footageMode: v })}
+              options={[
+                { value: "auto", label: "My footage (cut up)" },
+                { value: "gradient", label: "Gradient only" },
+              ]}
+            />
+          </div>
+          <p className="mt-1.5 text-[11px] text-muted">
+            Footage comes from <code className="text-fg/70">worker/footage/&lt;game&gt;/</code> on your Mac — your own gameplay or
+            short official trailer clips. No footage → animated gradient.
+          </p>
+        </div>
+
+        <motion.div animate={{ opacity: r.footageMode === "auto" ? 1 : 0.35 }} className={clsx("space-y-4", r.footageMode !== "auto" && "pointer-events-none")}>
+          <label className="block">
+            <span className="flex justify-between text-xs text-muted">
+              Max seconds per footage cut
+              <span className="font-mono text-fg">{r.maxCutSec === 0 ? "no limit" : `${r.maxCutSec}s`}</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={15}
+              step={0.5}
+              value={r.maxCutSec}
+              onChange={(e) => set({ maxCutSec: Number(e.target.value) })}
+              className="mt-2 w-full accent-[var(--coral)]"
+            />
+            <span className="text-[11px] text-muted">
+              Shorter cuts = no long stretch of any one source on screen. 2–4s is a good balance.
+            </span>
+          </label>
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm">Keep footage sound</p>
+              <p className="text-[11px] text-muted">Off = picture only. Audio is what Content ID matches most — keep it off for trailers.</p>
+            </div>
+            <Toggle label="Keep footage sound" checked={r.keepFootageAudio} onChange={(v) => set({ keepFootageAudio: v })} />
+          </div>
+          {r.keepFootageAudio && (
+            <label className="block">
+              <span className="flex justify-between text-xs text-muted">
+                Footage volume under the voice <span className="font-mono text-fg">{r.footageVolume}%</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={60}
+                step={5}
+                value={r.footageVolume}
+                onChange={(e) => set({ footageVolume: Number(e.target.value) })}
+                className="mt-2 w-full accent-[var(--coral)]"
+              />
+            </label>
+          )}
+        </motion.div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs text-muted">Narrator voice</span>
+            <select
+              value={voiceKnown ? r.voice : "__custom"}
+              onChange={(e) => set({ voice: e.target.value === "__custom" ? "" : e.target.value })}
+              className={`${inputCls} mt-1.5 cursor-pointer`}
+            >
+              {VOICES.map((v) => (
+                <option key={v} value={v} className="bg-bg-elev">
+                  {v}
+                </option>
+              ))}
+              <option value="__custom" className="bg-bg-elev">
+                Other…
+              </option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted">Speed (words/min)</span>
+            <input
+              type="number"
+              min={120}
+              max={260}
+              step={5}
+              value={r.voiceRate}
+              onChange={(e) => set({ voiceRate: Number(e.target.value) })}
+              className={`${inputCls} mt-1.5 font-mono`}
+            />
+          </label>
+        </div>
+        {!voiceKnown && (
+          <input
+            value={r.voice}
+            onChange={(e) => set({ voice: e.target.value })}
+            placeholder="Exact macOS voice name, e.g. Ava (Premium)"
+            className={inputCls}
+          />
+        )}
+        <p className="-mt-2 text-[11px] text-muted">
+          Voices are the ones installed on your Mac (<code className="text-fg/70">say -v &apos;?&apos;</code>). Missing voice → Samantha.
+        </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs text-muted">Words per caption</span>
+            <input
+              type="number"
+              min={1}
+              max={8}
+              value={r.captionWords}
+              onChange={(e) => set({ captionWords: Number(e.target.value) })}
+              className={`${inputCls} mt-1.5 font-mono`}
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted">Watermark</span>
+            <input
+              value={r.brandText}
+              maxLength={30}
+              onChange={(e) => set({ brandText: e.target.value })}
+              placeholder="none"
+              className={`${inputCls} mt-1.5`}
+            />
+          </label>
+        </div>
+        <p className="text-[11px] text-muted">Changes apply to the next render. Full videos use twice the caption words.</p>
+      </div>
+    </div>
+  );
+}
+
+/** Daily upload slots (UTC). Shorts are spread across them. */
+function UploadTimes({ times, onChange }: { times: string[]; onChange: (t: string[]) => void }) {
+  const sorted = [...times].sort();
+  const [adding, setAdding] = useState("18:00");
+  return (
+    <div className="mt-4">
+      <span className="text-xs text-muted">Upload times (UTC) — Shorts are spread across them</span>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        {sorted.map((t) => (
+          <span key={t} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-white/[0.04] py-1 pl-3 pr-1 font-mono text-sm">
+            {t}
+            <button
+              type="button"
+              onClick={() => onChange(sorted.filter((x) => x !== t))}
+              disabled={sorted.length <= 1}
+              aria-label={`Remove ${t}`}
+              className="grid h-5 w-5 place-items-center rounded-full text-muted transition hover:bg-white/10 hover:text-fg disabled:opacity-30"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        {sorted.length < 6 && (
+          <span className="inline-flex items-center gap-1">
+            <input
+              type="time"
+              value={adding}
+              onChange={(e) => setAdding(e.target.value)}
+              aria-label="New upload time"
+              className="rounded-lg border border-border bg-transparent px-2 py-1 font-mono text-sm text-fg outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => adding && !sorted.includes(adding) && onChange([...sorted, adding].sort())}
+              className="rounded-full bg-white/5 px-3 py-1 text-xs transition hover:bg-white/10"
+            >
+              + Add
+            </button>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const fmtTime = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 
 /** Explains the daily rhythm and shows last/next runs (times in your local timezone). */
 function ScheduleStatus({ s, saved }: { s: Settings; saved: Settings }) {
   const sch = saved.schedule;
-  const [h, m] = s.uploadTime.split(":").map(Number);
+  const first = [...s.uploadTimes].sort()[0] ?? s.uploadTime;
+  const [h, m] = first.split(":").map(Number);
   const discoveryUtc = `${String((h - DISCOVERY_LEAD_HOURS + 24) % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-  const timeChanged = s.uploadTime !== saved.uploadTime;
+  const timeChanged = JSON.stringify([...s.uploadTimes].sort()) !== JSON.stringify([...saved.uploadTimes].sort());
+  const slots = s.uploadTimes.length;
+  const perSlot = Math.max(1, Math.ceil(s.formats.short.perDay / slots));
 
   return (
     <div className="mt-3 rounded-xl bg-white/[0.03] p-3 text-xs text-muted">
@@ -199,15 +482,19 @@ function ScheduleStatus({ s, saved }: { s: Settings; saved: Settings }) {
         {DISCOVERY_LEAD_HOURS}h before upload) so you can review.{" "}
         {s.autopilot ? (
           <>
-            At <b className="text-fg/90">{s.uploadTime} UTC</b> up to {s.formats.short.perDay} approved Short
-            {s.formats.short.perDay > 1 ? "s" : ""} + 1 full video upload.
+            At{" "}
+            <b className="text-fg/90">
+              {[...s.uploadTimes].sort().join(", ")} UTC
+            </b>{" "}
+            up to {perSlot} approved Short{perSlot > 1 ? "s" : ""} upload{slots > 1 ? " per slot" : ""} (+ the full video at the
+            first slot).
           </>
         ) : (
           <>Autopilot is off — approved videos upload right away.</>
         )}
       </p>
       {!sch?.ready ? (
-        <p className="mt-2 text-warning">Scheduler needs migration 0002 — run it in the Supabase SQL Editor.</p>
+        <p className="mt-2 text-warning">Scheduler needs the latest migrations — run them in the Supabase SQL Editor.</p>
       ) : timeChanged ? (
         <p className="mt-2 text-amber">Save to update the next run times.</p>
       ) : (
@@ -227,8 +514,18 @@ function ScheduleStatus({ s, saved }: { s: Settings; saved: Settings }) {
   );
 }
 
-function YouTubeConnection({ connected, channelTitle }: { connected: boolean; channelTitle?: string }) {
+function YouTubeConnection({
+  connected,
+  channelTitle,
+  scopes,
+}: {
+  connected: boolean;
+  channelTitle?: string;
+  scopes?: Settings["youtubeScopes"];
+}) {
   const disconnect = useDisconnectYouTube();
+  const [asking, setAsking] = useState(false);
+  const stopAsking = useCallback(() => setAsking(false), []);
 
   // result of the Google redirect (?youtube=connected / ?youtube_error=...)
   useEffect(() => {
@@ -240,7 +537,7 @@ function YouTubeConnection({ connected, channelTitle }: { connected: boolean; ch
   }, []);
 
   return (
-    <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-border p-3">
+    <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-border p-3">
       <div className="min-w-0">
         <p className="flex items-center gap-2 text-sm font-medium">
           YouTube channel
@@ -252,9 +549,7 @@ function YouTubeConnection({ connected, channelTitle }: { connected: boolean; ch
       </div>
       {connected ? (
         <button
-          onClick={() => {
-            if (confirm("Disconnect YouTube? Queued uploads will wait until you reconnect.")) disconnect.mutate();
-          }}
+          onClick={() => setAsking(true)}
           disabled={disconnect.isPending}
           className="shrink-0 rounded-full border border-border px-4 py-1.5 text-xs text-muted transition hover:bg-white/5 hover:text-fg disabled:opacity-50"
         >
@@ -269,6 +564,27 @@ function YouTubeConnection({ connected, channelTitle }: { connected: boolean; ch
           Connect YouTube
         </a>
       )}
+      {connected && scopes && (!scopes.analytics || !scopes.comments) && (
+        <p className="basis-full text-[11px] text-amber">
+          Missing {[!scopes.analytics && "Analytics (% watched)", !scopes.comments && "comment posting"].filter(Boolean).join(" and ")} —{" "}
+          <a href="/api/youtube/connect" className="underline hover:text-fg">
+            reconnect
+          </a>{" "}
+          and tick every permission to enable them.
+        </p>
+      )}
+      <ConfirmDialog
+        open={asking}
+        title="Disconnect YouTube?"
+        confirmLabel="Disconnect"
+        tone="danger"
+        busy={disconnect.isPending}
+        onConfirm={() => disconnect.mutate(undefined, { onSettled: () => setAsking(false) })}
+        onCancel={stopAsking}
+      >
+        <p>ClipPilot loses access to {channelTitle ?? "your channel"}. Videos already on YouTube stay there.</p>
+        <p>Approved videos wait until you connect again. Playlists are re-linked on reconnect.</p>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -298,54 +614,6 @@ function Card({
       </h2>
       {children}
     </motion.section>
-  );
-}
-
-function GameRow({
-  item,
-  index,
-  withinDepth,
-  onToggle,
-}: {
-  item: Settings["games"][number];
-  index: number;
-  withinDepth: boolean;
-  onToggle: (v: boolean) => void;
-}) {
-  const controls = useDragControls();
-  const game = GAMES_BY_SLUG[item.slug];
-  return (
-    <Reorder.Item
-      value={item}
-      dragListener={false}
-      dragControls={controls}
-      whileDrag={{ scale: 1.02, boxShadow: "0 12px 40px -12px rgb(0 0 0 / 0.6)" }}
-      className={clsx(
-        "flex items-center gap-3 rounded-xl border border-border bg-bg-elev/70 px-3 py-2.5",
-        !item.enabled && "opacity-50",
-      )}
-    >
-      <button
-        onPointerDown={(e) => controls.start(e)}
-        className="cursor-grab touch-none text-muted active:cursor-grabbing"
-        aria-label={`Drag ${game.name}`}
-      >
-        <GripVertical className="h-4 w-4" />
-      </button>
-      <span className="w-5 font-mono text-xs text-muted">{index + 1}</span>
-      <span className="h-2 w-2 rounded-full" style={{ background: game.color, boxShadow: `0 0 8px ${game.color}` }} />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm">
-          {game.name}
-          {index === 0 && <span className="ml-2 text-[10px] uppercase tracking-wider text-coral">primary</span>}
-        </p>
-        <p className="truncate text-[11px] text-muted">
-          {game.playlistTitle}
-          {!withinDepth && " · beyond fallback depth"}
-        </p>
-      </div>
-      <Toggle label={`Enable ${game.name}`} checked={item.enabled} onChange={onToggle} />
-    </Reorder.Item>
   );
 }
 

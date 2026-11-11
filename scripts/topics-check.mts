@@ -1,0 +1,23 @@
+import assert from "node:assert/strict";
+import { topicTitleMatch, dailyShortsTotal, slugify, presetTopic } from "../src/lib/topics.ts";
+import { buildLearnings } from "../src/lib/ai/learning.ts";
+const t = (kw: string[], slug = "x") => topicTitleMatch({ slug, keywords: kw });
+assert.ok(t(["cyberpunk", "2077"]).test("Cyberpunk 2077 secret ending"));
+assert.ok(!t(["cyberpunk"]).test("Cyberpunkish vibes"), "whole word only");
+assert.ok(t(["gta 6"]).test("New GTA6 leak"), "space optional");
+assert.ok(t(["gta 6"]).test("gta 6 trailer"));
+assert.ok(!t(["gta 6"]).test("GTA 60 fps"));
+assert.ok(t([], "gta-6").test("GTA VI map"), "empty → built-in rule");
+assert.ok(t([], "custom-x").test("anything"), "custom empty → anything");
+assert.equal(slugify("Cyberpunk 2077: Phantom Liberty"), "cyberpunk-2077-phantom-liberty");
+const topics = ["gta-6","gta-5","minecraft","fortnite"].map((s,i)=>({...presetTopic(s,i)!, dailyShorts: 1}));
+assert.equal(dailyShortsTotal({ topicMode: "per_topic", topics, formats: { short: { perDay: 3 } } }), 4);
+assert.equal(dailyShortsTotal({ topicMode: "fallback", topics, formats: { short: { perDay: 3 } } }), 3);
+// learnings
+const now = Date.parse("2026-11-20T00:00:00Z");
+const mk = (i: number, views: number, pct?: number) => ({ id: String(i), workspaceId: "w", game: "gta-6", isFallback: false, format: "short" as const, durationSec: 30, title: `T${i}`, hook: `H${i}`, description: "", tags: [], status: "published" as const, trendIds: [], trendUrl: "", viralScore: 0, riskScore: 0, createdAt: "", publishedAt: "2026-11-15T00:00:00Z", views, avgViewPct: pct });
+assert.equal(buildLearnings([mk(1, 100), mk(2, 200)], now), "", "needs ≥4");
+const L = buildLearnings([mk(1, 10_000, 80), mk(2, 500), mk(3, 2_000), mk(4, 12_000, 30), mk(5, 300)], now);
+assert.match(L, /Worked best:\n- \[gta-6\] "T1"/, "high retention lifts T1 above T4");
+assert.match(L, /Underperformed:[\s\S]*"T5"/);
+console.log("topics + learnings: all checks passed");
