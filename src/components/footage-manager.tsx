@@ -83,7 +83,7 @@ export function FootageManager({ topics }: { topics: Topic[] }) {
         quick cuts of these. Used by the cloud worker, so your Mac doesn&apos;t need to be on.
       </p>
       <div className="flex flex-wrap items-center gap-3">
-        <select value={game} onChange={(e) => setGame(e.target.value)} className={`${inputCls} w-auto cursor-pointer`}>
+        <select value={game} onChange={(e) => setGame(e.target.value)} className={`${inputCls} cursor-pointer sm:max-w-xs`}>
           {topics.map((t) => (
             <option key={t.slug} value={t.slug} className="bg-bg-elev">
               {t.name}
@@ -94,7 +94,7 @@ export function FootageManager({ topics }: { topics: Topic[] }) {
         <button
           onClick={() => input.current?.click()}
           disabled={!!busy || !game}
-          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-coral to-violet px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full bg-sunset px-4 py-2 text-sm font-medium text-bg transition-transform enabled:hover:scale-105 disabled:opacity-50"
         >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {busy ? `Uploading ${busy}…` : "Upload clips"}

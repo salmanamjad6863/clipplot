@@ -24,16 +24,51 @@ export type ClipStatus =
 /** short = vertical 9:16 reel/Short, long = horizontal 16:9 full video */
 export type VideoFormat = "short" | "long";
 
+/** One moment of a pure edit: a piece of the original video (its own audio), plus our overlays */
+export interface EditMoment {
+  start: number;
+  end: number;
+  /** short context text over the moment (≤6 words) or empty */
+  caption?: string;
+  memeText?: string;
+  fx?: "none" | "punch" | "shake" | "wait";
+  sfx?: "none" | "whoosh" | "boom" | "ding" | "scratch" | "pop";
+}
+
 export interface ClipScript {
+  /** commentary = our two hosts talk (default); edit = pure edit of the original video, no voiceover */
+  style?: "commentary" | "edit";
+  /** Pure edits: chosen moments of the original + top hook text */
+  moments?: EditMoment[];
+  hookText?: string;
   /** Narrator voice for this clip only (VOICES id); unset = Settings default */
   voice?: string;
   /** Background cut from the source creator's video (labelled in the UI) */
   testRender?: boolean;
   angle: string;
   thumbnailText: string;
-  segments: { startSec: number; voiceover: string; onScreenText: string; visual: string; emphasis?: string[] }[];
+  segments: {
+    startSec: number;
+    voiceover: string;
+    onScreenText: string;
+    visual: string;
+    emphasis?: string[];
+    /** A = hype host, B = skeptical co-host (different voices) */
+    speaker?: "A" | "B";
+    fx?: "none" | "punch" | "shake" | "wait";
+    sfx?: "none" | "whoosh" | "boom" | "ding" | "scratch" | "pop";
+    memeText?: string;
+    /** Seconds of the original trend clip (with its audio) played before this line */
+    receipt?: number;
+  }[];
+  format?: string;
+  musicMood?: "hype" | "mystery" | "chill" | "epic" | "funny";
   /** Question to pin as the first comment (drives comments) */
   pinnedComment?: string;
+  /** Attribution for Creative Commons visuals in the last render (added to the YouTube description) */
+  credits?: string[];
+  /** Stock-video searches (Pexels) for the background when there's no own footage */
+  stockQueries?: string[];
   /** Other honest title angles for A/B testing */
   titleAlternatives?: string[];
   /** Full videos: chapter marks from the real render timing (added by the worker) */
@@ -127,8 +162,9 @@ export interface FormatSettings {
 /** How the worker builds each video — editable in Settings → Video & copyright */
 export interface RenderSettings {
   /** auto = your footage from worker/footage/<game>/ when present, else gradient; gradient = never use footage;
-   *  source = cut up the trend's own YouTube video (may get Content ID claims) */
-  footageMode: "auto" | "gradient" | "source";
+   *  source = cut up the trend's own YouTube video (may get Content ID claims); stock = free Pexels stock video.
+   *  Fallback chain: source → my footage → stock → gradient. */
+  footageMode: "auto" | "gradient" | "source" | "stock";
   /** Longest continuous piece of any footage file, in seconds (0 = no limit, one continuous piece) */
   maxCutSec: number;
   /** Keep the footage's own sound under the voiceover (off = picture only — far fewer Content ID matches) */
@@ -143,6 +179,21 @@ export interface RenderSettings {
   captionWords: number;
   /** Corner watermark, empty = none */
   brandText: string;
+  /** Second host's voice (B = skeptical co-host); `voice` is host A */
+  voiceB: string;
+  /** Host names on the speaker tags */
+  hostA: string;
+  hostB: string;
+  /** Editor touches: punch zooms, shake, "WAIT…" moments, sound effects, meme captions */
+  effects: boolean;
+  /** Short original-clip "receipts" with their own audio (needs the source video — Mac worker) */
+  receipts: boolean;
+  /** Background music (your library in Settings, else free Creative Commons music) */
+  music: boolean;
+  /** Music level under the voices, 0–100 % (it ducks further while someone talks) */
+  musicVolume: number;
+  /** Discovery: every Nth Short is a pure edit (original video + audio, no voiceover). 0 = never */
+  editEvery: number;
 }
 
 export const DEFAULT_RENDER: RenderSettings = {
@@ -154,6 +205,14 @@ export const DEFAULT_RENDER: RenderSettings = {
   voiceRate: 185,
   captionWords: 3,
   brandText: "ClipPilot",
+  voiceB: "kokoro:af_bella",
+  hostA: "Max",
+  hostB: "Zoe",
+  effects: true,
+  receipts: true,
+  music: true,
+  musicVolume: 22,
+  editEvery: 3,
 };
 
 /** Narrator voices. "kokoro:*" = free neural voices (natural, run on your Mac); others = macOS `say` voices. */

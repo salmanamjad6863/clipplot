@@ -102,6 +102,9 @@ export async function runDiscovery(
       merged.fellBack ||= plan.fellBack;
     }
 
+    // mix in pure edits (original video + audio, no voiceover): roughly every Nth Short
+    const every = settings.render?.editEvery ?? 0;
+    if (every > 0) for (const c of merged.clips) if (c.format === "short" && Math.random() < 1 / every) c.style = "edit";
     const saved = await store.saveDiscovery(merged);
     const result: DiscoveryResult = {
       trendsSaved: saved.trends,

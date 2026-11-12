@@ -171,6 +171,8 @@ export const mockStore: Store = {
   async markCommentPosted() {},
   async saveChapters() {},
   async markTestRender() {},
+  async saveCredits() {},
+  async saveEditPlan() {},
   async setVoiceAndRerender(id, voice) {
     const c = clips.find((x) => x.id === id);
     if (!c || !c.script) return null;

@@ -7,6 +7,7 @@ import clsx from "clsx";
 import { Inbox, LayoutDashboard, Library, LogOut, Radar, Settings, SquarePlay } from "lucide-react";
 import { Logo } from "./logo";
 import { WorkspaceSwitcher } from "./workspace-switcher";
+import { WorkerControl } from "./worker-control";
 import { useClips, useSettings } from "@/lib/queries";
 
 const NAV = [
@@ -83,6 +84,7 @@ export function Sidebar() {
         <p className="mt-2 text-muted">
           Autopilot: <span className={settings?.autopilot ? "text-success" : "text-fg/70"}>{settings?.autopilot ? "On" : "Off"}</span>
         </p>
+        <WorkerControl />
       </div>
       <SignOut />
     </aside>

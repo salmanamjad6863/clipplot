@@ -42,6 +42,8 @@ export interface PlannedClip {
   existingTrendIds: string[];
   trendUrl: string;
   viralScore: number;
+  /** set after planning: "edit" = pure edit of the original video */
+  style?: "commentary" | "edit";
 }
 
 export interface GameLog {

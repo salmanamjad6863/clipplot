@@ -82,6 +82,15 @@ video needs rendering/uploading, plus every 15 min as the scheduler clock. Your 
   works best from your Mac.
 - `pnpm worker` on your Mac still works alongside it (they never take the same job).
 
+## 3c. Free stock video (Pixabay) — pending
+Real video backgrounds without your own footage: Claude suggests mood searches per script ("neon city night",
+"sports car drifting") and the worker cuts up matching free stock clips (commercial use, no credit needed).
+1. pixabay.com → **Join** (free) → open pixabay.com/api/docs → your key is shown in the **key** row (green).
+2. Add `PIXABAY_API_KEY=<key>` to `.env.local` **and** Vercel → Settings → Environment Variables → redeploy.
+   (A Pexels key also works: `PEXELS_API_KEY` — Pexels has paused new keys.)
+3. Settings → Video & copyright → Background footage: **Stock video** (or keep "My footage" / "Source video";
+   stock is the automatic backup when those have nothing).
+
 ## 4. Daily autopilot (how it runs)
 - The cloud worker (3b) — or `pnpm worker` on your Mac — renders, uploads, **and is the scheduler clock**.
 - Settings → **Daily upload time (UTC)**. Discovery + Claude scripts run 4h earlier so you can review.

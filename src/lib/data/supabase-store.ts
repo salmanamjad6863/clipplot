@@ -428,6 +428,8 @@ export function createSupabaseStore(url: string, secretKey: string, ws: string):
             trend_ids: ids,
             trend_url: c.trendUrl,
             viral_score: c.viralScore,
+            // pure edits are marked in the script column (no DB migration needed)
+            ...(c.style === "edit" ? { script: JSON.stringify({ style: "edit", segments: [] }) } : {}),
           };
         })
         .filter((r) => r !== null);
@@ -458,6 +460,7 @@ export function createSupabaseStore(url: string, secretKey: string, ws: string):
           trend_ids: c.trendIds,
           trend_url: c.trendUrl,
           viral_score: c.viralScore,
+          ...(c.style === "edit" ? { script: JSON.stringify({ style: "edit", segments: [] }) } : {}),
         })
         .select("*")
         .single<ClipRow>();
@@ -772,6 +775,22 @@ export function createSupabaseStore(url: string, secretKey: string, ws: string):
       if (!script) return;
       const { error: e2 } = await scoped.clips.update({ script: JSON.stringify({ ...script, chapters }) }).eq("id", clipId);
       if (e2) fail("save chapters", e2);
+    },
+
+    async saveEditPlan(clipId, w) {
+      const { error } = await scoped.clips
+        .update({ title: w.title.slice(0, 100), description: w.description, tags: w.tags, hook: w.hook, script: JSON.stringify(w.script) })
+        .eq("id", clipId);
+      if (error) fail("save edit plan", error);
+    },
+
+    async saveCredits(clipId, credits) {
+      const { data, error } = await scoped.clips.select("script").eq("id", clipId).maybeSingle<{ script: string | null }>();
+      if (error) fail("read script", error);
+      const script = parseScript(data?.script ?? null);
+      if (!script || (!credits.length && !script.credits?.length)) return;
+      const { error: e2 } = await scoped.clips.update({ script: JSON.stringify({ ...script, credits: credits.length ? credits : undefined }) }).eq("id", clipId);
+      if (e2) fail("save credits", e2);
     },
 
     async markTestRender(clipId, on) {

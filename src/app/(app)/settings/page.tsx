@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
 import clsx from "clsx";
-import { Clapperboard, Copy, Film, Radar, Save, Smartphone, Timer, SquarePlay } from "lucide-react";
+import { Clapperboard, Copy, Film, Music, Radar, Save, Smartphone, SquarePlay, Timer } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { TopicsManager } from "@/components/topics-manager";
 import { FootageManager } from "@/components/footage-manager";
+import { MusicManager } from "@/components/music-manager";
 import { PageHeader, Segmented, Toggle, ease, inputCls } from "@/components/ui";
 import { DISCOVERY_LEAD_HOURS } from "@/lib/schedule-time";
 import {
@@ -150,6 +151,11 @@ function SettingsForm({ initial }: { initial: Settings }) {
         {/* Footage library (cloud) */}
         <Card i={5} icon={Clapperboard} title="Footage library" className="lg:col-span-2">
           <FootageManager topics={s.topics} />
+        </Card>
+
+        {/* Music library (cloud) */}
+        <Card i={6} icon={Music} title="Music library" className="lg:col-span-2">
+          <MusicManager />
         </Card>
 
         {/* Publishing */}
@@ -295,7 +301,8 @@ function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderS
               options={[
                 { value: "auto", label: "My footage (cut up)" },
                 { value: "gradient", label: "Gradient only" },
-                { value: "source", label: "Source video (test)" },
+                { value: "source", label: "Source video" },
+                { value: "stock", label: "Stock video" },
               ]}
             />
           </div>
@@ -304,8 +311,14 @@ function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderS
               Cuts up the trending video itself (needs yt-dlp on your Mac). Videos made this way may get Content ID claims.
             </p>
           )}
+          {r.footageMode === "stock" && (
+            <p className="mt-1.5 text-[11px] text-muted">
+              Free stock clips (Pixabay / Pexels) matched to each script&apos;s mood — needs{" "}
+              <code className="text-fg/70">PIXABAY_API_KEY</code> or <code className="text-fg/70">PEXELS_API_KEY</code>.
+            </p>
+          )}
           <p className="mt-1.5 text-[11px] text-muted">
-            Footage comes from <code className="text-fg/70">worker/footage/&lt;game&gt;/</code> on your Mac — your own gameplay or
+            Order tried: source video → your footage → free stock video → animated gradient. Footage comes from <code className="text-fg/70">worker/footage/&lt;game&gt;/</code> on your Mac — your own gameplay or
             short official trailer clips. No footage → animated gradient.
           </p>
         </div>
@@ -359,7 +372,7 @@ function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderS
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="text-xs text-muted">Narrator voice</span>
+            <span className="text-xs text-muted">Host A voice (hype)</span>
             <select
               value={voiceKnown ? r.voice : "__custom"}
               onChange={(e) => set({ voice: e.target.value === "__custom" ? "" : e.target.value })}
@@ -396,9 +409,67 @@ function VideoSettings({ r, set }: { r: RenderSettings; set: (p: Partial<RenderS
             className={inputCls}
           />
         )}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs text-muted">Host B voice (skeptic)</span>
+            <select value={r.voiceB} onChange={(e) => set({ voiceB: e.target.value })} className={`${inputCls} mt-1.5 cursor-pointer`}>
+              {VOICES.filter((v) => v.id.startsWith("kokoro:")).map((v) => (
+                <option key={v.id} value={v.id} className="bg-bg-elev">
+                  {v.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="text-xs text-muted">Host A name</span>
+              <input value={r.hostA} maxLength={14} onChange={(e) => set({ hostA: e.target.value })} className={`${inputCls} mt-1.5`} />
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted">Host B name</span>
+              <input value={r.hostB} maxLength={14} onChange={(e) => set({ hostB: e.target.value })} className={`${inputCls} mt-1.5`} />
+            </label>
+          </div>
+        </div>
         <p className="-mt-2 text-[11px] text-muted">
-          Natural voices are generated free on your Mac (first render downloads the ~90 MB voice model once).
+          Scripts are a back-and-forth between two hosts, each with their own voice and name tag. Natural voices are
+          generated free (first render downloads the ~90 MB voice model once).
         </p>
+
+        <div className="space-y-3 rounded-xl border border-border p-3">
+          <p className="text-xs font-medium text-muted">Editor style</p>
+          {(
+            [
+              ["effects", "Effects & meme moments", "Punch zooms, shakes, “WAIT…” moments, sound effects, meme captions"],
+              ["receipts", "Original-clip receipts", "1–3 short moments of the trending clip with its sound, then the hosts react (Mac worker)"],
+              ["music", "Background music", "Your Music library, else free CC0 / CC BY tracks (credited in the description)"],
+            ] as const
+          ).map(([key, label, hint]) => (
+            <div key={key} className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm">{label}</p>
+                <p className="text-[11px] text-muted">{hint}</p>
+              </div>
+              <Toggle label={label} checked={r[key] !== false} onChange={(v) => set({ [key]: v })} />
+            </div>
+          ))}
+          {r.music !== false && (
+            <label className="block">
+              <span className="flex justify-between text-xs text-muted">
+                Music level (ducks more while hosts talk) <span className="font-mono text-fg">{r.musicVolume}%</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={60}
+                step={2}
+                value={r.musicVolume}
+                onChange={(e) => set({ musicVolume: Number(e.target.value) })}
+                className="mt-2 w-full accent-[var(--coral)]"
+              />
+            </label>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 gap-3">
           <label className="block">

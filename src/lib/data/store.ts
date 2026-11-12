@@ -74,6 +74,10 @@ export interface Store {
   saveChapters(clipId: string, chapters: { t: number; title: string }[]): Promise<void>;
   /** Remember whether the last render used source-video footage (test mode). */
   markTestRender(clipId: string, on: boolean): Promise<void>;
+  /** Pure edits: save Claude's plan (title, description, tags, moments) without changing status. */
+  saveEditPlan(clipId: string, w: { title: string; description: string; tags: string[]; hook: string; script: ClipScript }): Promise<void>;
+  /** Attribution lines for the visuals of the last render (replaces the previous list). */
+  saveCredits(clipId: string, credits: string[]): Promise<void>;
   /** Set this clip's narrator voice (null = Settings default) and queue a fresh render. */
   setVoiceAndRerender(clipId: string, voice: string | null): Promise<Clip | null>;
   /** Clips stuck in `scripting` (crash/restart) since before `olderThanIso` → back to discovered */
@@ -115,6 +119,8 @@ export interface NewClip {
   trendUrl: string;
   viralScore: number;
   isFallback?: boolean;
+  /** "edit" = pure edit of the original video (no voiceover) */
+  style?: "commentary" | "edit";
 }
 
 export interface ScriptWrite {

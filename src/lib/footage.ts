@@ -29,14 +29,17 @@ let ensured = false;
 async function bucket() {
   const sb = client();
   if (!ensured) {
-    const { error } = await sb.storage.getBucket(FOOTAGE_BUCKET);
+    const opts = {
+      public: false,
+      fileSizeLimit: `${FOOTAGE_MAX_MB}MB`,
+      allowedMimeTypes: ["video/mp4", "video/quicktime", "video/webm", "video/x-matroska", "application/json", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/wav", "audio/x-wav", "audio/ogg"],
+    };
+    const { data: existing, error } = await sb.storage.getBucket(FOOTAGE_BUCKET);
     if (error) {
-      const { error: e2 } = await sb.storage.createBucket(FOOTAGE_BUCKET, {
-        public: false,
-        fileSizeLimit: `${FOOTAGE_MAX_MB}MB`,
-        allowedMimeTypes: ["video/mp4", "video/quicktime", "video/webm", "video/x-matroska"],
-      });
+      const { error: e2 } = await sb.storage.createBucket(FOOTAGE_BUCKET, opts);
       if (e2 && !/already exists/i.test(e2.message)) throw new Error(`Supabase storage: ${e2.message}`);
+    } else if (!existing.allowed_mime_types?.includes("audio/mpeg")) {
+      await sb.storage.updateBucket(FOOTAGE_BUCKET, opts);
     }
     ensured = true;
   }
@@ -58,7 +61,7 @@ export function cleanName(name: string): string {
 
 export async function listFootage(game?: string): Promise<FootageFile[]> {
   const b = await bucket();
-  const games = game ? [game] : ((await b.list("", { limit: 200 })).data ?? []).filter((e) => !e.id).map((e) => e.name);
+  const games = game ? [game] : ((await b.list("", { limit: 200 })).data ?? []).filter((e) => !e.id && !e.name.startsWith("_")).map((e) => e.name);
   const out: FootageFile[] = [];
   for (const g of games) {
     const { data, error } = await b.list(g, { limit: 500, sortBy: { column: "name", order: "asc" } });
@@ -96,4 +99,72 @@ export async function footageDownloads(game: string) {
   const { data, error } = await (await bucket()).createSignedUrls(files.map((f) => f.path), 3600);
   if (error) throw new Error(`Supabase storage: ${error.message}`);
   return files.map((f, i) => ({ name: f.name, size: f.size, url: data[i]?.signedUrl ?? "" })).filter((f) => f.url);
+}
+
+/* ---------- tiny private JSON docs (worker heartbeat) — same private bucket, under _system/ ---------- */
+
+export async function writeSystemJson(name: string, value: unknown) {
+  const { error } = await (await bucket()).upload(`_system/${name}.json`, JSON.stringify(value), {
+    contentType: "application/json",
+    upsert: true,
+  });
+  if (error) throw new Error(`Supabase storage: ${error.message}`);
+}
+
+export async function readSystemJson<T>(name: string): Promise<T | null> {
+  const { data, error } = await (await bucket()).download(`_system/${name}.json`);
+  if (error || !data) return null;
+  try {
+    return JSON.parse(await data.text()) as T;
+  } catch {
+    return null;
+  }
+}
+
+/* ---------- Music library: _music/<mood>/<file> in the same private bucket ---------- */
+
+export const MOODS = ["hype", "mystery", "chill", "epic", "funny"] as const;
+export type Mood = (typeof MOODS)[number];
+const isMood = (m: string): m is Mood => (MOODS as readonly string[]).includes(m);
+
+export async function listMusic(mood?: string) {
+  const b = await bucket();
+  const out: { mood: Mood; name: string; path: string; size: number }[] = [];
+  for (const m of mood ? [mood] : MOODS) {
+    if (!isMood(m)) continue;
+    const { data } = await b.list(`_music/${m}`, { limit: 200, sortBy: { column: "name", order: "asc" } });
+    for (const f of data ?? []) {
+      if (!f.id || f.name.startsWith(".")) continue;
+      out.push({ mood: m, name: f.name, path: `_music/${m}/${f.name}`, size: Number(f.metadata?.size ?? 0) });
+    }
+  }
+  return out;
+}
+
+export async function createMusicUpload(mood: string, name: string, size: number) {
+  if (!isMood(mood)) throw new HttpError(400, "Invalid mood");
+  if (!(size > 0) || size > 20 * 1024 * 1024) throw new HttpError(400, "Each track must be under 20 MB");
+  const ext = (name.match(/\.(mp3|m4a|wav|ogg)$/i)?.[1] ?? "").toLowerCase();
+  if (!ext) throw new HttpError(400, "Only .mp3, .m4a, .wav or .ogg files");
+  const base = name.slice(0, -(ext.length + 1)).normalize("NFKD").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "track";
+  const path = `_music/${mood}/${base}.${ext}`;
+  const { data, error } = await (await bucket()).createSignedUploadUrl(path, { upsert: true });
+  if (error) throw new Error(`Supabase storage: ${error.message}`);
+  return { path, token: data.token };
+}
+
+export async function deleteMusic(path: string) {
+  const m = path.match(/^_music\/([a-z]+)\/([^/]+)$/);
+  if (!m || !isMood(m[1])) throw new HttpError(400, "Invalid file");
+  const { error } = await (await bucket()).remove([path]);
+  if (error) throw new Error(`Supabase storage: ${error.message}`);
+}
+
+/** Worker: tracks for a mood with 1-hour links. */
+export async function musicDownloads(mood: string) {
+  const files = await listMusic(mood);
+  if (!files.length) return [];
+  const { data, error } = await (await bucket()).createSignedUrls(files.map((f) => f.path), 3600);
+  if (error) throw new Error(`Supabase storage: ${error.message}`);
+  return files.map((f, i) => ({ id: f.path, url: data[i]?.signedUrl ?? "", credit: null as string | null })).filter((f) => f.url);
 }

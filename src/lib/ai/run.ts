@@ -7,6 +7,28 @@ import { MODEL, generateScript } from "./script";
 /** Writes the script for one already-claimed clip (status = scripting). */
 export async function scriptClip(clip: Clip, note?: string): Promise<Clip | null> {
   const store = getStore(clip.workspaceId);
+  if (clip.script?.style === "edit") {
+    // pure edit: no voiceover script — the worker reads the video's transcript and asks Claude for the best
+    // moments at render time (it has the video; this server doesn't)
+    const trends = await store.getTrendsByIds(clip.trendIds);
+    return store.saveScript(clip.id, {
+      hook: "",
+      title: clip.title,
+      description: "",
+      tags: [],
+      riskScore: 50,
+      script: {
+        style: "edit",
+        angle: "Pure edit of the original video",
+        riskNotes: "Uses the original creator's footage and audio — may get Content ID claims",
+        thumbnailText: "",
+        segments: [],
+        sources: trends.map((t) => ({ title: t.title, channel: t.channel, url: t.url })),
+        model: "none",
+        generatedAt: new Date().toISOString(),
+      },
+    });
+  }
   try {
     const [trends, all, settings] = await Promise.all([store.getTrendsByIds(clip.trendIds), store.listClips(), store.getSettings()]);
     const r = await generateScript(clip, trends, {
@@ -15,6 +37,11 @@ export async function scriptClip(clip: Clip, note?: string): Promise<Clip | null
       learnings: buildLearnings(all, Date.now(), clip.format),
       topic: settings.topics.find((t) => t.slug === clip.game),
       persona: settings.channelPersona || undefined,
+      // last 30 videos so Claude rotates format + angle instead of repeating itself
+      recent: all
+        .filter((c) => c.id !== clip.id && c.script)
+        .slice(0, 30)
+        .map((c) => `${c.script?.format ?? "?"} — ${c.title}`),
     });
     const saved = await store.saveScript(clip.id, {
       hook: r.hook,
@@ -30,6 +57,9 @@ export async function scriptClip(clip: Clip, note?: string): Promise<Clip | null
         sources: r.sources,
         riskNotes: r.riskNotes,
         pinnedComment: r.pinnedComment,
+        stockQueries: r.stockQueries?.slice(0, 6),
+        format: r.format,
+        musicMood: r.musicMood,
         titleAlternatives: r.titleAlternatives,
         model: MODEL,
         generatedAt: new Date().toISOString(),

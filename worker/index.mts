@@ -16,7 +16,7 @@ import os from "node:os";
 import { createClient } from "@supabase/supabase-js";
 import { DEFAULT_RENDER, type Clip, type RenderSettings } from "../src/lib/types.ts";
 import { run } from "./proc.mts";
-import { OUTPUT_DIR, fullPathFor, renderClip, setCloudFootage, sourceFlagFor, thumbPathFor } from "./render.mts";
+import { OUTPUT_DIR, fullPathFor, renderClip, setCloudFootage, setEditPlanner, setMusicSearch, setStockSearch, sourceFlagFor, thumbPathFor } from "./render.mts";
 import { setThumbnail, uploadToYouTube, type UploadMetadata } from "./youtube.mts";
 
 const API = (process.env.CLIPPILOT_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -54,6 +54,27 @@ async function uploadPreview(jobId: string, file: string) {
 
 type JobKind = "render" | "upload";
 
+/* ---------- heartbeat: lets the app show "working / idle / stopped" ---------- */
+const KIND = process.env.WORKER_KIND === "cloud" ? "cloud" : "mac";
+const beat: { state: "idle" | "rendering" | "uploading" | "stopped"; title?: string; progress?: string } = { state: "idle" };
+async function sendBeat() {
+  await call("heartbeat", { workerId: WORKER_ID, kind: KIND, ...beat }).catch(() => {}); // never break a job over status
+}
+function setBeat(next: typeof beat) {
+  Object.assign(beat, { title: undefined, progress: undefined }, next);
+  void sendBeat();
+}
+let beatTimer: ReturnType<typeof setInterval> | null = null;
+function startBeats() {
+  void sendBeat();
+  beatTimer = setInterval(sendBeat, 20_000);
+}
+async function stopBeats() {
+  if (beatTimer) clearInterval(beatTimer);
+  beat.state = "stopped";
+  await sendBeat();
+}
+
 async function processOne(type: JobKind): Promise<boolean> {
   const { job, clip, render } = await call<{ job: { id: string; attempts: number } | null; clip?: Clip; render?: RenderSettings }>("claim", {
     workerId: WORKER_ID,
@@ -62,13 +83,18 @@ async function processOne(type: JobKind): Promise<boolean> {
   if (!job || !clip) return false;
 
   log(`▶ ${type} ${job.id.slice(0, 8)} · ${clip.format} · "${clip.title}" (attempt ${job.attempts})`);
+  setBeat({ state: type === "render" ? "rendering" : "uploading", title: clip.title });
   const started = Date.now();
   try {
     if (type === "render") {
+      // pure edits ask the server (Claude) to pick moments from the transcript — tied to this job
+      setEditPlanner((transcript, durationSec) => call("edit-plan", { jobId: job.id, transcript, durationSec }));
       const r = await renderClip(clip, (m) => log(`  ${m}`), render);
       log("  uploading preview…");
       await uploadPreview(job.id, r.previewPath);
-      await call("complete", { jobId: job.id, durationSec: r.durationSec, chapters: r.chapters, testRender: r.testRender });
+      if (r.credits.length) log(`  credits: ${r.credits.length} line(s) for the description`);
+      const done = await call<{ credits?: number }>("complete", { jobId: job.id, durationSec: r.durationSec, chapters: r.chapters, testRender: r.testRender, credits: r.credits });
+      if (r.credits.length && done.credits !== r.credits.length) log(`  ⚠ server saved ${done.credits ?? "no"} credit line(s) of ${r.credits.length}`);
       log(`✓ rendered in ${((Date.now() - started) / 1000).toFixed(0)}s → ${r.fullPath}`);
     } else {
       // full-quality file from the render step; re-render if it was deleted or rendered elsewhere
@@ -80,7 +106,11 @@ async function processOne(type: JobKind): Promise<boolean> {
       if (existsSync(sourceFlagFor(clip))) log("  note: background footage is from the source creator's video");
       const plan = await call<{ accessToken: string; channel: string | null; metadata: UploadMetadata }>("upload-plan", { jobId: job.id });
       log(`  uploading to YouTube${plan.channel ? ` (${plan.channel})` : ""} as ${String(plan.metadata.status.privacyStatus)}…`);
-      const videoId = await uploadToYouTube(file, plan.metadata, plan.accessToken, (m) => log(`  ${m}`));
+      const videoId = await uploadToYouTube(file, plan.metadata, plan.accessToken, (m) => {
+        log(`  ${m}`);
+        const pct = m.match(/upload (\d+)%/)?.[1];
+        if (pct) beat.progress = `${pct}%`; // goes out with the next heartbeat
+      });
       const thumb = thumbPathFor(clip);
       if (clip.format === "long" && existsSync(thumb)) {
         const err = await setThumbnail(videoId, await readFile(thumb), plan.accessToken);
@@ -96,6 +126,7 @@ async function processOne(type: JobKind): Promise<boolean> {
       log(`  couldn't report failure: ${e.message}`),
     );
   }
+  setBeat({ state: "idle" });
   return true;
 }
 
@@ -158,6 +189,11 @@ async function main() {
   if (!SECRET) throw new Error("WORKER_SECRET missing (it's in .env.local)");
   log(`ClipPilot worker ${WORKER_ID} → ${API}`);
   // footage uploaded in Settings → Footage (signed download links, valid 1h)
+  // free stock video (Pixabay / Pexels) — the server holds the API keys
+  setStockSearch(async (queries, portrait) =>
+    (await call<{ videos: { id: string; url: string }[] }>("stock", { queries, orientation: portrait ? "portrait" : "landscape", perQuery: 2 })).videos,
+  );
+  setMusicSearch(async (mood) => (await call<{ tracks: { id: string; url: string; credit: string | null }[] }>("music", { mood })).tracks);
   setCloudFootage(async (game) => (await call<{ files: { name: string; url: string; size: number }[] }>("footage", { game })).files);
 
   if (args.includes("--tick")) {
@@ -168,6 +204,7 @@ async function main() {
   if (args.includes("--drain")) {
     // cloud run: stop starting new jobs after DRAIN_MINUTES so the runner never hits its time limit
     const until = Date.now() + Number(process.env.DRAIN_MINUTES || 45) * 60_000;
+    startBeats();
     await tick(true).catch((e) => log(`tick error: ${e instanceof Error ? e.message : e}`));
     let n = 0;
     while (Date.now() < until) {
@@ -179,6 +216,7 @@ async function main() {
       n++;
     }
     log(n ? `drained ${n} job(s)` : "no render or upload jobs waiting");
+    await stopBeats();
     return;
   }
 
@@ -188,10 +226,14 @@ async function main() {
   }
 
   let stop = false;
-  process.on("SIGINT", () => {
+  const onStop = () => {
+    if (stop) process.exit(0); // second signal → quit now
     log("stopping after the current job…");
     stop = true;
-  });
+  };
+  process.on("SIGINT", onStop);
+  process.on("SIGTERM", onStop);
+  startBeats();
   let lastTick = 0;
   while (!stop) {
     if (Date.now() - lastTick >= TICK_MS) {
@@ -205,8 +247,11 @@ async function main() {
     } catch (err) {
       log(`poll error: ${err instanceof Error ? err.message : err}`);
     }
-    await new Promise((r) => setTimeout(r, POLL_MS));
+    // sleep in small steps so Stop takes effect quickly
+    for (let t = 0; t < POLL_MS && !stop; t += 1000) await new Promise((r) => setTimeout(r, 1000));
   }
+  await stopBeats();
+  log("worker stopped");
 }
 
 main().catch((err) => {

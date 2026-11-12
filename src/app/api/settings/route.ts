@@ -73,7 +73,7 @@ function validate(body: Partial<Settings>) {
   }
   if (body.render) {
     const r = body.render;
-    if (r.footageMode !== undefined && !["auto", "gradient", "source"].includes(r.footageMode)) errors.push("Footage mode must be auto, gradient or source");
+    if (r.footageMode !== undefined && !["auto", "gradient", "source", "stock"].includes(r.footageMode)) errors.push("Invalid footage mode");
     if (r.maxCutSec !== undefined && !int(r.maxCutSec, 0, 60)) errors.push("Max cut length must be 0–60 seconds");
     if (r.footageVolume !== undefined && !int(r.footageVolume, 0, 100)) errors.push("Footage volume must be 0–100");
     if (r.voiceRate !== undefined && !int(r.voiceRate, 120, 260)) errors.push("Voice speed must be 120–260 wpm");
@@ -81,6 +81,15 @@ function validate(body: Partial<Settings>) {
     if (r.voice !== undefined && !isVoiceId(r.voice)) errors.push("Invalid voice name");
     if (r.brandText !== undefined && (typeof r.brandText !== "string" || r.brandText.length > 30)) errors.push("Watermark max 30 characters");
     if (r.keepFootageAudio !== undefined && typeof r.keepFootageAudio !== "boolean") errors.push("Invalid footage audio option");
+    if (r.voiceB !== undefined && !isVoiceId(r.voiceB)) errors.push("Invalid second voice");
+    for (const k of ["hostA", "hostB"] as const) {
+      if (r[k] !== undefined && (typeof r[k] !== "string" || r[k].length > 14)) errors.push("Host names max 14 characters");
+    }
+    for (const k of ["effects", "receipts", "music"] as const) {
+      if (r[k] !== undefined && typeof r[k] !== "boolean") errors.push(`Invalid ${k} option`);
+    }
+    if (r.musicVolume !== undefined && !int(r.musicVolume, 0, 100)) errors.push("Music volume must be 0–100");
+    if (r.editEvery !== undefined && !int(r.editEvery, 0, 10)) errors.push("Pure edit frequency must be 0–10");
   }
   if (body.uploadTimes !== undefined) {
     if (!Array.isArray(body.uploadTimes) || body.uploadTimes.length < 1 || body.uploadTimes.length > 6) {

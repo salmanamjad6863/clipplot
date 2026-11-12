@@ -104,7 +104,33 @@ export const GAMES: Game[] = [
   },
 ];
 
-export const GAMES_BY_SLUG = Object.fromEntries(GAMES.map((g) => [g.slug, g])) as Record<string, Game>;
+/**
+ * More gaming niches, offered as one-click "quick add" chips in Settings → Topics (not seeded by default).
+ * "gaming-news" is the broad one: viral moments + news across all games.
+ */
+export const EXTRA_GAMES: Game[] = [
+  {
+    slug: "gaming-news",
+    name: "Gaming news & viral moments",
+    priority: 20,
+    queries: ["gaming news", "new game trailer", "viral gaming moment", "game reveal"],
+    titleMatch: /game|gaming|trailer|reveal|update|patch|ps5|xbox|nintendo|switch|steam|pc gaming/i,
+    playlistTitle: "Gaming News Shorts",
+    hashtags: ["#Gaming", "#GamingNews", "#Shorts"],
+    color: "#a78bfa",
+  },
+  { slug: "valorant", name: "Valorant", priority: 21, queries: ["Valorant"], titleMatch: /valorant/i, playlistTitle: "Valorant Shorts", hashtags: ["#Valorant", "#Shorts"], color: "#ff4655" },
+  { slug: "ea-fc", name: "EA Sports FC", priority: 22, queries: ["EA FC", "EA Sports FC"], titleMatch: /\b(ea\s*(sports\s*)?fc|fc\s*2\d|fut)\b/i, playlistTitle: "EA FC Shorts", hashtags: ["#EAFC", "#Shorts"], color: "#22c55e" },
+  { slug: "pokemon", name: "Pokémon", priority: 23, queries: ["Pokemon"], titleMatch: /pok[eé]mon/i, playlistTitle: "Pokémon Shorts", hashtags: ["#Pokemon", "#Shorts"], color: "#facc15" },
+  { slug: "nintendo", name: "Nintendo / Switch 2", priority: 24, queries: ["Nintendo Switch 2", "Nintendo Direct"], titleMatch: /nintendo|switch\s*2|mario|zelda/i, playlistTitle: "Nintendo Shorts", hashtags: ["#Nintendo", "#Switch2", "#Shorts"], color: "#ef4444" },
+  { slug: "cs2", name: "Counter-Strike 2", priority: 25, queries: ["CS2", "Counter-Strike 2"], titleMatch: /\bcs2\b|counter[-\s]?strike/i, playlistTitle: "CS2 Shorts", hashtags: ["#CS2", "#Shorts"], color: "#f59e0b" },
+  { slug: "apex", name: "Apex Legends", priority: 26, queries: ["Apex Legends"], titleMatch: /apex legends|\bapex\b/i, playlistTitle: "Apex Shorts", hashtags: ["#ApexLegends", "#Shorts"], color: "#dc2626" },
+  { slug: "marvel-rivals", name: "Marvel Rivals", priority: 27, queries: ["Marvel Rivals"], titleMatch: /marvel rivals/i, playlistTitle: "Marvel Rivals Shorts", hashtags: ["#MarvelRivals", "#Shorts"], color: "#e11d48" },
+  { slug: "genshin", name: "Genshin Impact", priority: 28, queries: ["Genshin Impact"], titleMatch: /genshin/i, playlistTitle: "Genshin Shorts", hashtags: ["#GenshinImpact", "#Shorts"], color: "#60a5fa" },
+  { slug: "funny-gaming", name: "Funny gaming moments", priority: 29, queries: ["funny gaming moments", "gaming fails", "gaming memes"], titleMatch: /funny|fail|meme|moment|lol|rage|clutch/i, playlistTitle: "Funny Gaming Moments", hashtags: ["#Gaming", "#Funny", "#Shorts"], color: "#fb923c" },
+];
+
+export const GAMES_BY_SLUG = Object.fromEntries([...GAMES, ...EXTRA_GAMES].map((g) => [g.slug, g])) as Record<string, Game>;
 
 /** Discovery rules for the daily fallback chain */
 export const DISCOVERY = {

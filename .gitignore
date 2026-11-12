@@ -46,3 +46,4 @@ next-env.d.ts
 /worker/footage/**
 !/worker/footage/README.md
 /worker/cache/
+/worker/worker.log

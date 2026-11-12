@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { motion } from "motion/react";
 import clsx from "clsx";
-import { Clapperboard, Copy, ExternalLink, Info, Link2, Plus, Radar, Search, Smartphone } from "lucide-react";
+import { Clapperboard, Copy, ExternalLink, Info, Link2, Plus, Radar, Scissors, Search, Smartphone } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { GameChip } from "@/components/game-chip";
 import { EmptyState, PageHeader, Segmented, SkeletonGrid, ease, inputCls } from "@/components/ui";
@@ -20,7 +20,7 @@ const STATUS: Record<TrendStatus, { label: string; tone: string }> = {
 };
 
 type Filter = "all" | TrendStatus;
-type Pending = { kind: "discover" } | { kind: "more" } | { kind: "clip"; trend: Trend; format: "short" | "long" } | null;
+type Pending = { kind: "discover" } | { kind: "more" } | { kind: "clip"; trend: Trend; format: "short" | "long"; style?: "edit" } | null;
 
 export default function TrendsPage() {
   const { data, isLoading } = useTrends();
@@ -130,6 +130,13 @@ export default function TrendsPage() {
                     >
                       <Clapperboard className="h-3.5 w-3.5" /> Full video
                     </button>
+                    <button
+                      onClick={() => setPending({ kind: "clip", trend: t, format: "short", style: "edit" })}
+                      title="Short made from the original video and its own audio — no voiceover"
+                      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs text-muted transition hover:bg-white/5 hover:text-fg"
+                    >
+                      <Scissors className="h-3.5 w-3.5" /> Pure edit
+                    </button>
                   </div>
                 )}
               </motion.div>
@@ -167,19 +174,26 @@ export default function TrendsPage() {
       </ConfirmDialog>
       <ConfirmDialog
         open={pending?.kind === "clip"}
-        title={pending?.kind === "clip" ? `Make a ${pending.format === "short" ? "Short" : "full video"} from this?` : ""}
+        title={pending?.kind === "clip" ? (pending.style === "edit" ? "Make a pure edit of this video?" : `Make a ${pending.format === "short" ? "Short" : "full video"} from this?`) : ""}
         confirmLabel={makeClip.isPending ? "Creating…" : "Make clip"}
         busy={makeClip.isPending}
         onConfirm={() => {
           if (pending?.kind !== "clip") return;
-          makeClip.mutate({ trendId: pending.trend.id, format: pending.format }, { onSettled: close });
+          makeClip.mutate({ trendId: pending.trend.id, format: pending.format, style: pending.style }, { onSettled: close });
         }}
         onCancel={close}
       >
         {pending?.kind === "clip" && (
           <>
             <p className="font-medium text-fg">“{pending.trend.title}”</p>
-            <p>Claude writes an original script inspired by it (one call), then the worker renders it for your review.</p>
+            {pending.style === "edit" ? (
+              <p>
+                No voiceover: the worker downloads the video and its subtitles, Claude picks the best moments, and they&apos;re
+                edited with captions, effects and music. Uses the creator&apos;s own footage and audio — expect Content ID claims.
+              </p>
+            ) : (
+              <p>Claude writes an original script inspired by it (one call), then the worker renders it for your review.</p>
+            )}
             {pending.trend.status === "duplicate" && <p className="text-warning">Heads-up: this looks like a story you already covered.</p>}
           </>
         )}

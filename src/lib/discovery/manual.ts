@@ -65,7 +65,7 @@ export async function manualLookup(ws: string, input: { query?: string; url?: st
 }
 
 /** Turn a chosen trend into a clip (Short or full video). Claude scripts it right after. */
-export async function clipFromTrend(ws: string, trendId: string, format: "short" | "long"): Promise<Clip> {
+export async function clipFromTrend(ws: string, trendId: string, format: "short" | "long", style: "commentary" | "edit" = "commentary"): Promise<Clip> {
   const store = getStore(ws);
   const [trend] = await store.getTrendsByIds([trendId]);
   if (!trend) throw new HttpError(404, "Trend not found");
@@ -80,6 +80,7 @@ export async function clipFromTrend(ws: string, trendId: string, format: "short"
     trendIds: [trend.id],
     trendUrl: trend.url,
     viralScore: viralScore(trend.viewsPerHour),
+    style,
   });
 }
 

@@ -26,6 +26,7 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
       DRAIN_MINUTES: "45"
+      WORKER_KIND: cloud
       WORKER_BRAND: ClipPilot
     steps:
       - name: Scheduler tick + check for work

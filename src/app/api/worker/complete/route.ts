@@ -7,8 +7,9 @@ import { readJson, requireWorker } from "@/lib/worker-auth";
 export async function POST(req: Request) {
   return handle("worker complete", async () => {
     requireWorker(req);
-    const { jobId, durationSec, chapters, testRender } = await readJson<{
+    const { jobId, durationSec, chapters, testRender, credits } = await readJson<{
       testRender?: boolean;
+      credits?: string[];
       jobId?: string;
       durationSec?: number;
       chapters?: { t: number; title: string }[];
@@ -29,8 +30,10 @@ export async function POST(req: Request) {
       await getStore(ws).saveChapters(job.clipId, clean);
     }
     await getStore(ws).markTestRender(job.clipId, testRender === true);
+    const cleanCredits = Array.isArray(credits) ? credits.map((c) => String(c).replace(/[\r\n]+/g, " ").slice(0, 200)).slice(0, 20) : [];
+    await getStore(ws).saveCredits(job.clipId, cleanCredits);
     const clip = await getStore(ws).completeRender(job.id, { clipId: job.clipId, previewUrl: publicUrl, durationSec });
     console.info(`[worker] render ${job.id} done → clip ${job.clipId} awaiting approval`);
-    return { ok: true, clipId: clip?.id };
+    return { ok: true, clipId: clip?.id, credits: cleanCredits.length };
   });
 }

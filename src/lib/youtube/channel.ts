@@ -67,6 +67,9 @@ export function buildUploadMetadata(clip: Clip, settings: Settings) {
     const ts = (t: number) => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
     description += `\n\nChapters\n${ch.map((c) => `${ts(c.t)} ${c.title}`).join("\n")}`;
   }
+  // Creative Commons visuals need attribution (kept last so it never crowds the hook)
+  const credits = clip.script?.credits ?? [];
+  if (credits.length) description += `\n\nVisuals:\n${credits.map((c) => `• ${c}`).join("\n")}`;
 
   return {
     snippet: {

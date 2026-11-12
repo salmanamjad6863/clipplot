@@ -7,7 +7,8 @@ import { GripVertical, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Segmented, Toggle, inputCls } from "./ui";
-import { TOPIC_COLORS, dailyShortsTotal, slugify, type Topic, type TopicMode } from "@/lib/topics";
+import { EXTRA_GAMES } from "@/lib/games";
+import { TOPIC_COLORS, dailyShortsTotal, presetTopic, slugify, type Topic, type TopicMode } from "@/lib/topics";
 import type { Settings } from "@/lib/types";
 
 const list = (v: string) =>
@@ -70,6 +71,28 @@ export function TopicsManager({ s, setS }: { s: Settings; setS: React.Dispatch<R
           />
         ))}
       </Reorder.Group>
+
+      {/* one-click wider gaming niches */}
+      {EXTRA_GAMES.some((g) => !topics.some((t) => t.slug === g.slug)) && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <span className="self-center text-[11px] text-muted">Quick add:</span>
+          {EXTRA_GAMES.filter((g) => !topics.some((t) => t.slug === g.slug)).map((g) => (
+            <button
+              key={g.slug}
+              type="button"
+              onClick={() => {
+                const t = presetTopic(g.slug, topics.length);
+                if (t) setTopics([...topics, t]);
+                toast.success(`Added ${g.name} — save to keep it`);
+              }}
+              className="rounded-full border border-border px-2.5 py-1 text-[11px] text-fg/90 transition hover:bg-white/5"
+            >
+              <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle" style={{ background: g.color }} />
+              {g.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <button
         type="button"

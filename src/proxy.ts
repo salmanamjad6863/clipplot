@@ -28,6 +28,8 @@ export const config = {
     "/api/trends/:path*",
     "/api/settings/:path*",
     "/api/footage/:path*",
+    "/api/music/:path*",
+    "/api/runner/:path*",
     "/api/discover/:path*",
     "/api/youtube/:path*",
     "/api/workspaces/:path*",

@@ -175,12 +175,14 @@ export function useLookup() {
 export function useClipFromTrend() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { trendId: string; format: "short" | "long" }) =>
-      api<Clip>(`/api/trends/${v.trendId}/clip`, { method: "POST", body: JSON.stringify({ format: v.format }) }),
-    onSuccess: (clip) => {
+    mutationFn: (v: { trendId: string; format: "short" | "long"; style?: "edit" }) =>
+      api<Clip>(`/api/trends/${v.trendId}/clip`, { method: "POST", body: JSON.stringify({ format: v.format, style: v.style }) }),
+    onSuccess: (clip, v) => {
       qc.invalidateQueries({ queryKey: queryKeys.trends });
       qc.invalidateQueries({ queryKey: queryKeys.clips });
-      toast.success("Clip created — Claude is writing the script", { description: clip.title });
+      toast.success(v.style === "edit" ? "Pure edit queued — the worker picks the best moments" : "Clip created — Claude is writing the script", {
+        description: clip.title,
+      });
     },
     onError: (err) => toast.error(err.message),
   });
